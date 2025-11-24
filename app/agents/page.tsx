@@ -6,6 +6,7 @@ import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
 import { agents, categories, type Agent, type Category } from "@/lib/agents";
 import { Sparkles } from "lucide-react";
+import GlobalHeader from "@/components/GlobalHeader";
 
 export default function AgentsPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
@@ -16,15 +17,15 @@ export default function AgentsPage() {
   }, [selectedCategory]);
 
   return (
-    <main className="min-h-screen bg-white px-4 py-10 text-gray-900">
-      <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        <TopNav />
-
+    <main className="min-h-screen bg-white px-4 py-10 flex flex-col items-center  text-gray-900">
+      <GlobalHeader />
+      <div className="mx-auto flex max-w-6xl flex-col gap-8 mt-12">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-semibold">Agents</h1>
             <p className="text-sm text-gray-600">
-              Browse all vetted agents. Filter by category to jump to what you need.
+              Browse all vetted agents. Filter by category to jump to what you
+              need.
             </p>
           </div>
           <Button

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { agents, categories, type Agent, type Category } from "@/lib/agents";
 import { Send, Sparkles, Star, UserRound, Wallet } from "lucide-react";
+import { useSignOut } from "@coinbase/cdp-hooks";
+import GlobalHeader from "@/components/GlobalHeader";
 
 type ChatMessage = {
   id: string;
@@ -18,7 +20,7 @@ export default function ChatPage() {
   const [view, setView] = useState<"landing" | "chat">("landing");
   const [prompt, setPrompt] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>(
-    categories[0]?.id ?? "ppt",
+    categories[0]?.id ?? "ppt"
   );
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -26,7 +28,9 @@ export default function ChatPage() {
   const [agentModal, setAgentModal] = useState<Agent | null>(null);
 
   const recommendedAgents = useMemo(() => {
-    const filtered = agents.filter((agent) => agent.category === selectedCategory);
+    const filtered = agents.filter(
+      (agent) => agent.category === selectedCategory
+    );
     const list = filtered.length ? filtered : agents;
     return [...list].sort((a, b) => {
       if (b.score === a.score) {
@@ -85,10 +89,9 @@ export default function ChatPage() {
   };
 
   return (
-    <main className="min-h-screen bg-white px-4 py-10 text-gray-900">
-      <div className="mx-auto flex max-w-6xl flex-col gap-10">
-        <TopNav />
-
+    <main className="min-h-screen bg-white px-4 py-10 flex flex-col items-center text-gray-900">
+      <GlobalHeader />
+      <div className="mx-auto flex max-w-6xl flex-col items-center gap-16">
         {view === "landing" ? (
           <LandingView
             prompt={prompt}
@@ -129,36 +132,6 @@ export default function ChatPage() {
   );
 }
 
-function TopNav() {
-  const navItems = [
-    { label: "Home", href: "/" },
-    { label: "Agents", href: "/agents" },
-  ];
-
-  return (
-    <div className="flex justify-center gap-3">
-      {navItems.map((item) => (
-        <Button
-          asChild
-          key={item.href}
-          className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-          size="lg"
-          variant="secondary"
-        >
-          <Link href={item.href}>{item.label}</Link>
-        </Button>
-      ))}
-      <Button
-        className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-        size="lg"
-        variant="secondary"
-      >
-        Connect Wallet
-      </Button>
-    </div>
-  );
-}
-
 function LandingView({
   prompt,
   onPromptChange,
@@ -177,12 +150,12 @@ function LandingView({
   onOpenAgent: (agent: Agent) => void;
 }) {
   return (
-    <section className="flex flex-col items-center gap-10">
+    <section className="flex flex-col items-center gap-10 mt-52">
       <div className="text-center">
         <h1 className="text-3xl font-semibold tracking-tight">Welcome!</h1>
       </div>
 
-      <div className="flex w-full flex-col gap-4">
+      <div className="flex w-full flex-col gap-4 items-center">
         <PromptComposer
           prompt={prompt}
           onPromptChange={onPromptChange}
@@ -242,7 +215,7 @@ function ChatView({
   onOpenAgent: (agent: Agent) => void;
 }) {
   return (
-    <section className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+    <section className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] mt-12">
       <div className="flex flex-col gap-6">
         <header className="flex items-center justify-between">
           <div>
@@ -324,7 +297,7 @@ function PromptComposer({
     <div
       className={cn(
         "flex w-full items-center gap-3 rounded-3xl bg-gray-100 px-5",
-        minimal ? "py-3" : "py-5 shadow-sm",
+        minimal ? "py-3" : "py-5 shadow-sm"
       )}
     >
       <input
@@ -360,7 +333,7 @@ function CategoryScroller({
   onCategoryChange: (value: string) => void;
 }) {
   return (
-    <div className="flex gap-3 overflow-x-auto pb-1">
+    <div className="flex gap-3 overflow-x-auto bg-blue-300 w-fit">
       {categories.map((category) => {
         const isSelected = category.id === selectedCategory;
         return (
@@ -372,7 +345,7 @@ function CategoryScroller({
               "min-w-[150px] rounded-xl px-4 py-3 text-left text-sm font-semibold shadow-sm transition",
               isSelected
                 ? "bg-gray-400 text-white"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300",
+                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
             )}
           >
             {category.label}
@@ -391,12 +364,14 @@ function ChatBubble({
   from: "user" | "ai";
 }) {
   const alignClass =
-    from === "user" ? "ml-auto bg-gray-200 text-gray-800" : "mr-auto bg-gray-100";
+    from === "user"
+      ? "ml-auto bg-gray-200 text-gray-800"
+      : "mr-auto bg-gray-100";
   return (
     <div
       className={cn(
         "max-w-xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm",
-        alignClass,
+        alignClass
       )}
     >
       {children}
@@ -458,10 +433,14 @@ function AgentModal({
                   "rounded-full px-4 py-2 text-sm font-semibold transition",
                   tab === key
                     ? "bg-gray-200 text-gray-900 shadow-sm"
-                    : "text-gray-600 hover:bg-gray-100",
+                    : "text-gray-600 hover:bg-gray-100"
                 )}
               >
-                {key === "about" ? "About" : key === "example" ? "Example" : "Reviews"}
+                {key === "about"
+                  ? "About"
+                  : key === "example"
+                  ? "Example"
+                  : "Reviews"}
               </button>
             ))}
           </div>
@@ -469,7 +448,9 @@ function AgentModal({
           <div className="rounded-2xl bg-gray-100 p-5">
             {tab === "about" && (
               <div className="space-y-2">
-                <p className="text-base font-semibold text-gray-900">About this Agent</p>
+                <p className="text-base font-semibold text-gray-900">
+                  About this Agent
+                </p>
                 <p className="text-gray-800">{agent.description}</p>
               </div>
             )}
@@ -483,8 +464,12 @@ function AgentModal({
                         key={example.title}
                         className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200"
                       >
-                        <p className="font-semibold text-gray-900">{example.title}</p>
-                        <p className="mt-1 text-sm text-gray-700">{example.body}</p>
+                        <p className="font-semibold text-gray-900">
+                          {example.title}
+                        </p>
+                        <p className="mt-1 text-sm text-gray-700">
+                          {example.body}
+                        </p>
                       </div>
                     );
                   }
@@ -495,14 +480,18 @@ function AgentModal({
                         key={example.title}
                         className="space-y-2 rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200"
                       >
-                        <p className="font-semibold text-gray-900">{example.title}</p>
+                        <p className="font-semibold text-gray-900">
+                          {example.title}
+                        </p>
                         <img
                           src={example.url}
                           alt={example.caption ?? example.title}
                           className="h-48 w-full rounded-lg object-cover"
                         />
                         {example.caption ? (
-                          <p className="text-xs text-gray-600">{example.caption}</p>
+                          <p className="text-xs text-gray-600">
+                            {example.caption}
+                          </p>
                         ) : null}
                       </div>
                     );
@@ -514,7 +503,9 @@ function AgentModal({
                         key={example.title}
                         className="space-y-2 rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200"
                       >
-                        <p className="font-semibold text-gray-900">{example.title}</p>
+                        <p className="font-semibold text-gray-900">
+                          {example.title}
+                        </p>
                         <pre className="overflow-auto rounded-lg bg-gray-900 p-3 text-xs text-gray-100">
                           <code>{example.code}</code>
                         </pre>
@@ -529,7 +520,9 @@ function AgentModal({
                 })}
 
                 {!(agent.examples ?? []).length ? (
-                  <p className="text-sm text-gray-600">No examples available yet.</p>
+                  <p className="text-sm text-gray-600">
+                    No examples available yet.
+                  </p>
                 ) : null}
               </div>
             )}
@@ -558,7 +551,9 @@ function AgentModal({
                 ))}
 
                 {!(agent.reviews ?? []).length ? (
-                  <p className="text-sm text-gray-600">No reviews yet. Be the first.</p>
+                  <p className="text-sm text-gray-600">
+                    No reviews yet. Be the first.
+                  </p>
                 ) : null}
               </div>
             )}
