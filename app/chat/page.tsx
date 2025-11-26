@@ -1,13 +1,28 @@
 "use client";
 
-import Link from "next/link";
 import ReactMarkdown from "react-markdown";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
+import { useHeaderVisibility } from "@/components/app-frame";
 import { cn } from "@/lib/utils";
-import { categories, type Agent, type Category } from "@/lib/agents";
-import { Loader2, Send, Sparkles, Star, UserRound, Wallet } from "lucide-react";
+import { categories, type Agent } from "@/lib/agents";
+import {
+  Bot,
+  Feather,
+  Grid,
+  Loader2,
+  Mic,
+  Palette,
+  PenSquare,
+  Plus,
+  Presentation,
+  Send,
+  Star,
+  UserRound,
+  Wallet,
+  X,
+} from "lucide-react";
 
 type TextMessage = {
   id: string;
@@ -35,6 +50,7 @@ type ExecutionMessage = {
 type ChatMessage = TextMessage | ExecutionMessage;
 
 export default function ChatPage() {
+  const { setShowHeader } = useHeaderVisibility();
   const [view, setView] = useState<"landing" | "chat">("landing");
   const [prompt, setPrompt] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>(
@@ -95,6 +111,11 @@ export default function ChatPage() {
   };
 
   const primaryAgent = recommendedAgents.find((agent) => agent.id === selectedAgentId);
+
+  useEffect(() => {
+    setShowHeader(view === "landing");
+    return () => setShowHeader(true);
+  }, [view, setShowHeader]);
 
   const handleSend = async () => {
     const text = prompt.trim();
@@ -337,10 +358,8 @@ export default function ChatPage() {
   };
 
   return (
-    <main className="min-h-screen bg-white px-4 py-10 text-gray-900">
-      <div className="mx-auto flex max-w-6xl flex-col gap-10">
-        <TopNav />
-
+    <>
+      <div className="flex h-full min-h-[calc(100vh-48px)] w-full flex-col gap-6 py-6 overflow-hidden">
         {view === "landing" ? (
           <LandingView
             prompt={prompt}
@@ -361,7 +380,6 @@ export default function ChatPage() {
             recommendedAgents={recommendedAgents}
             selectedAgent={primaryAgent}
             onOpenAgent={(agent) => setAgentModal(agent)}
-            onSelectAgent={handleSelectAgent}
             onConfirm={executeAgent}
             searching={searching}
             searchError={searchError}
@@ -389,37 +407,7 @@ export default function ChatPage() {
           }}
         />
       ) : null}
-    </main>
-  );
-}
-
-function TopNav() {
-  const navItems = [
-    { label: "Home", href: "/" },
-    { label: "Agents", href: "/agents" },
-  ];
-
-  return (
-    <div className="flex justify-center gap-3">
-      {navItems.map((item) => (
-        <Button
-          asChild
-          key={item.href}
-          className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-          size="lg"
-          variant="secondary"
-        >
-          <Link href={item.href}>{item.label}</Link>
-        </Button>
-      ))}
-      <Button
-        className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-        size="lg"
-        variant="secondary"
-      >
-        Connect Wallet
-      </Button>
-    </div>
+    </>
   );
 }
 
@@ -440,34 +428,40 @@ function LandingView({
   recommendedAgents: Agent[];
   onOpenAgent: (agent: Agent) => void;
 }) {
-  return (
-    <section className="flex flex-col items-center gap-10">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Welcome!</h1>
-      </div>
+  const categoriesUI: { id: string; label: string; icon: React.ReactNode; tint: string }[] = [
+    { id: "scraper", label: "Scraper", icon: <Bot className="h-5 w-5" />, tint: "bg-gray-100 text-gray-600" },
+    { id: "cartoonist", label: "Cartoonist", icon: <Palette className="h-5 w-5" />, tint: "bg-orange-100 text-orange-500" },
+    { id: "slides", label: "Slides", icon: <Presentation className="h-5 w-5" />, tint: "bg-amber-100 text-amber-500" },
+    { id: "sheets", label: "Sheets", icon: <Grid className="h-5 w-5" />, tint: "bg-green-100 text-green-500" },
+    { id: "docs", label: "Docs", icon: <PenSquare className="h-5 w-5" />, tint: "bg-blue-100 text-blue-500" },
+    { id: "logo", label: "Logo", icon: <Feather className="h-5 w-5" />, tint: "bg-purple-100 text-purple-500" },
+  ];
 
-      <div className="flex w-full flex-col gap-4">
+  return (
+    <section className="flex flex-col items-center gap-12 pt-32">
+      <h1 className="text-3xl font-semibold tracking-tight text-gray-900">어떤 도움이 필요하신가요?</h1>
+
+      <div className="flex w-[70%] flex-col items-center gap-6">
         <PromptComposer
           prompt={prompt}
           onPromptChange={onPromptChange}
           onSend={onSend}
-          placeholder="Frame your request and let AI shortlist the right agent..."
+          placeholder="무엇이든 물어보세요"
+          landing
         />
 
         <CategoryScroller
-          categories={categories}
+          categories={categoriesUI}
           selectedCategory={selectedCategory}
           onCategoryChange={onCategoryChange}
         />
       </div>
 
-      <div className="w-full space-y-4">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-gray-700" />
-          <h2 className="text-xl font-semibold">PPT Agents</h2>
-          <span className="text-sm text-gray-500">
-            Vetted by AI with recorded runs and pricing signals.
-          </span>
+      <div className="w-[80%] space-y-4 mt-8">
+        <div className="flex items-center justify-center gap-3 text-sm font-semibold text-gray-600">
+          <span className="h-px w-16 bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
+          추천
+          <span className="h-px w-16 bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
         </div>
         {recommendedAgents.length ? (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -497,7 +491,6 @@ function ChatView({
   recommendedAgents,
   selectedAgent,
   onOpenAgent,
-  onSelectAgent,
   onConfirm,
   searching,
   searchError,
@@ -515,7 +508,6 @@ function ChatView({
   recommendedAgents: Agent[];
   selectedAgent: Agent | undefined;
   onOpenAgent: (agent: Agent) => void;
-  onSelectAgent: (agent: Agent) => void;
   onConfirm: () => void;
   searching: boolean;
   searchError: string | null;
@@ -525,9 +517,21 @@ function ChatView({
   onReviewChangeExecution: (executionId: string, value: string) => void;
   onSubmitReview: (executionId: string) => void;
 }) {
+  const hasRecommended = recommendedAgents.length > 0;
+
   return (
-    <section className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-      <div className="flex flex-col gap-6">
+    <section
+      className={cn(
+        "relative flex h-full w-full items-stretch gap-6 overflow-hidden transition-all duration-300",
+        hasRecommended ? "pr-4" : "justify-center",
+      )}
+    >
+      <div
+        className={cn(
+          "flex h-full flex-col gap-4 overflow-hidden transition-all duration-300",
+          hasRecommended ? "flex-[2]" : "w-full max-w-4xl",
+        )}
+      >
         <header className="flex items-center justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.12em] text-gray-500">
@@ -535,12 +539,12 @@ function ChatView({
             </p>
             <h2 className="text-2xl font-semibold">Request PPT</h2>
           </div>
-          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+          {/* <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
             AI compares verified runs, then ranks for you
-          </span>
+          </span> */}
         </header>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto pr-2 pb-28">
           {messages.map((message) => {
             if (message.kind === "text") {
               return (
@@ -606,27 +610,34 @@ function ChatView({
                   ) : agentExecuted ? (
                     "Execution completed"
                   ) : (
-                    "Confirm & Execute (Enter on button)"
-                  )}
+                    "Confirm"
+                  )}c
                 </Button>
-                <span className="text-xs text-gray-500">
-                  Selected agent card sits under the chat bubble. Press Enter on this button or click confirm to call /execute.
-                </span>
               </div>
             </div>
           )}
         </div>
 
-        <PromptComposer
-          prompt={prompt}
-          onPromptChange={onPromptChange}
-          onSend={onSend}
-          placeholder="Add more details or ask to keep going..."
-          minimal
-        />
+        <div className="pointer-events-none sticky bottom-0 z-10 mt-auto bg-white/90 pb-2">
+          <div className="pointer-events-auto">
+            <PromptComposer
+              prompt={prompt}
+              onPromptChange={onPromptChange}
+              onSend={onSend}
+              placeholder="Add more details or ask to keep going..."
+            />
+          </div>
+        </div>
       </div>
 
-      <aside className="rounded-3xl bg-gray-50 p-5 shadow-sm">
+      <aside
+        className={cn(
+          "flex max-h-full flex-col overflow-hidden rounded-3xl bg-gray-50 p-5 shadow-sm transition-all duration-300",
+          hasRecommended
+            ? "flex-[1] translate-x-0 opacity-100"
+            : "pointer-events-none w-0 -translate-x-6 opacity-0",
+        )}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-xl font-semibold">Recommended List</h3>
           <span className="flex items-center gap-2 text-xs text-gray-500">
@@ -645,8 +656,8 @@ function ChatView({
             Search error: {searchError}
           </p>
         ) : null}
-        {recommendedAgents.length ? (
-          <div className="flex flex-col gap-4">
+        {hasRecommended ? (
+          <div className="flex flex-col gap-4 overflow-y-auto">
             {recommendedAgents.map((agent, index) => (
               <AgentCard
                 key={agent.id}
@@ -655,15 +666,10 @@ function ChatView({
                 rank={index + 1}
                 active={selectedAgent?.id === agent.id}
                 onOpen={() => onOpenAgent(agent)}
-                // onSelect={() => onSelectAgent(agent)}
               />
             ))}
           </div>
-        ) : (
-          <p className="text-sm text-gray-500">
-            No agents yet. Submit a prompt to search.
-          </p>
-        )}
+        ) : null}
       </aside>
     </section>
   );
@@ -737,55 +743,101 @@ function PromptComposer({
   onPromptChange,
   onSend,
   placeholder,
-  minimal,
+  landing,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
   onSend: () => void | Promise<void>;
   placeholder: string;
-  minimal?: boolean;
+  landing?: boolean;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [textHeight, setTextHeight] = useState(72);
+
+  const handleChange = (value: string, target?: HTMLTextAreaElement) => {
+    onPromptChange(value);
+    const el = target ?? textareaRef.current;
+    if (el) {
+      el.style.height = "auto";
+      const newHeight = Math.max(40, Math.min(el.scrollHeight, 200));
+      el.style.height = `${newHeight}px`;
+      setTextHeight(newHeight);
+    }
+  };
+
   return (
     <div
       className={cn(
-        "flex w-full items-center gap-3 rounded-3xl bg-gray-100 px-5",
-        minimal ? "py-3" : "py-5 shadow-sm",
+        "flex w-full flex-col rounded-[32px] border border-gray-200 bg-white shadow-sm transition",
+        landing ? "px-3 py-3" : "px-5 py-4",
       )}
     >
-      <input
-        value={prompt}
-        onChange={(e) => onPromptChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            onSend();
-          }
-        }}
-        placeholder={placeholder}
-        className="flex-1 bg-transparent text-base outline-none placeholder:text-gray-400"
-      />
-      <button
-        type="button"
-        onClick={onSend}
-        className="flex h-11 w-11 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/80"
+      <div
+        className="flex w-full flex-col gap-3"
       >
-        <Send className="h-5 w-5" />
-      </button>
+        <textarea
+          ref={textareaRef}
+          value={prompt}
+          onChange={(e) => handleChange(e.target.value, e.target)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onSend();
+            }
+          }}
+          placeholder={placeholder}
+          className={cn(
+            "w-full p-3 resize-none bg-transparent text-base text-gray-900 outline-none placeholder:text-gray-400",
+            landing ? "min-h-[32px] leading-relaxed" : "",
+          )}
+          style={{ height: `${textHeight}px` }}
+        />
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        <button
+          type="button"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-200"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-200"
+          >
+            <Mic className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={onSend}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/80"
+          >
+            <Send className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
+
+type CategoryOption = {
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  tint?: string;
+};
 
 function CategoryScroller({
   categories,
   selectedCategory,
   onCategoryChange,
 }: {
-  categories: Category[];
+  categories: CategoryOption[];
   selectedCategory: string;
   onCategoryChange: (value: string) => void;
 }) {
   return (
-    <div className="flex gap-3 overflow-x-auto pb-1">
+    <div className="flex gap-4 overflow-x-auto pb-2">
       {categories.map((category) => {
         const isSelected = category.id === selectedCategory;
         return (
@@ -794,13 +846,28 @@ function CategoryScroller({
             type="button"
             onClick={() => onCategoryChange(category.id)}
             className={cn(
-              "min-w-[150px] rounded-xl px-4 py-3 text-left text-sm font-semibold shadow-sm transition",
-              isSelected
-                ? "bg-gray-400 text-white"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300",
+              "flex min-w-[120px] flex-col items-center gap-2 rounded-xl px-3 py-3 text-sm font-semibold transition",
+              "text-gray-600 hover:-translate-y-[2px]",
             )}
           >
-            {category.label}
+            <span
+              className={cn(
+                "flex h-12 w-12 items-center justify-center rounded-full text-base",
+                isSelected
+                  ? "bg-gray-50 shadow-lg"
+                  : category.tint ?? "bg-gray-100 text-gray-600",
+              )}
+            >
+              {category.icon}
+            </span>
+            <span
+              className={cn(
+                "text-xs font-semibold leading-tight text-center",
+                isSelected ? "text-gray-900" : "text-gray-600",
+              )}
+            >
+              {category.label}
+            </span>
           </button>
         );
       })}
@@ -855,42 +922,45 @@ function AgentModal({
           type="button"
           aria-label="Close"
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-full bg-white px-3 py-1 text-xs font-semibold text-gray-600 shadow"
+          className="absolute right-4 top-4 rounded-full px-2 py-2 text-xs font-semibold text-gray-600"
         >
-          Close
+          <X className="h-4 w-4"/>
         </button>
 
         <div className="flex flex-col gap-4">
           <div className="flex items-start justify-between">
             <div>
               <h3 className="text-2xl font-semibold">{agent.name}</h3>
-              <div className="mt-2 flex items-center gap-2 text-sm text-gray-700">
-                <UserRound className="h-4 w-4" />
-                <span>{agent.author}</span>
-              </div>
+              <div className="flex items-center mt-2 mb-2 gap-3 text-sm font-semibold text-gray-800">
+                <div className="flex items-center gap-1">
+                  <Wallet className="h-4 w-4" />
+                  <span>{priceValue.toFixed(3)}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Star className="h-4 w-4" />
+                  <span>{ratingValue.toFixed(1)}</span>
+                </div>
+                <div className="flex items-center gap-1 text-sm text-gray-700">
+                  <UserRound className="h-4 w-4" />
+                  <span>{agent.author}</span>
+                </div>
+            </div>
             </div>
             <div className="flex items-center gap-3 text-sm font-semibold text-gray-800">
-              <div className="flex items-center gap-1">
-                <Wallet className="h-4 w-4" />
-                <span>{priceValue.toFixed(3)}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Star className="h-4 w-4" />
-                <span>{ratingValue.toFixed(1)}</span>
-              </div>
+              
             </div>
           </div>
 
-          <div className="flex gap-4">
+          <div className="flex gap-1">
             {(["about", "example", "reviews"] as const).map((key) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => setTab(key)}
                 className={cn(
-                  "rounded-full px-4 py-2 text-sm font-semibold transition",
+                  "rounded-full px-3 py-1 text-sm font-semibold transition",
                   tab === key
-                    ? "bg-gray-200 text-gray-900 shadow-sm"
+                    ? "bg-gray-200 text-gray-900 sha"
                     : "text-gray-600 hover:bg-gray-100",
                 )}
               >
@@ -1001,7 +1071,7 @@ function AgentModal({
             <button
               type="button"
               onClick={onUseAgent}
-              className="rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-black/90"
+              className="rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-black/90"
             >
               Use this agent
             </button>

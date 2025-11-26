@@ -15,7 +15,6 @@ type AgentCardProps = {
 
 export function AgentCard({
   agent,
-  compact,
   highlight,
   active,
   rank,
@@ -37,10 +36,9 @@ export function AgentCard({
     <div
       onClick={handleClick}
       className={cn(
-        "flex cursor-pointer flex-col gap-3 rounded-2xl border border-gray-200 bg-gray-100 p-4 text-left shadow-sm transition hover:-translate-y-[1px] hover:shadow-md",
-        highlight && "bg-gray-200",
-        active && "ring-2 ring-[#4B6BFF]",
-        compact ? "w-full" : "w-full",
+        "flex cursor-pointer flex-col gap-2 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-sm transition hover:-translate-y-[1px] hover:shadow-md",
+        highlight && "bg-gray-50",
+        active && "bg-gray-200",
       )}
     >
       <div className="flex items-start justify-between">
@@ -50,9 +48,9 @@ export function AgentCard({
             Verified run score {normalizedScore.toFixed(1)}
           </span>
         </div>
-        {onSelect || onOpen ? (
+        {/* {onSelect || onOpen ? (
           <span className="text-[11px] text-[#4B6BFF]">choose</span>
-        ) : null}
+        ) : null} */}
       </div>
 
       <div className="flex flex-col gap-3">

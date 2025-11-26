@@ -1,18 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
-import { categories, type Agent, type Category } from "@/lib/agents";
+import { type Agent } from "@/lib/agents";
 import { createClient } from "@/lib/supabase/client";
-import { Sparkles } from "lucide-react";
+import { Bot, Grid, Palette, PenSquare, Presentation } from "lucide-react";
 
 export default function AgentsPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const categoriesUI: { id: string; label: string; icon: ReactNode | null; tint: string }[] = [
+    { id: "all", label: "All", icon: null, tint: "" },
+    { id: "scraper", label: "Scraper", icon: <Bot className="h-4 w-4" />, tint: "bg-gray-100 text-gray-600" },
+    { id: "cartoonist", label: "Cartoonist", icon: <Palette className="h-4 w-4" />, tint: "bg-orange-100 text-orange-500" },
+    { id: "slides", label: "Slides", icon: <Presentation className="h-4 w-4" />, tint: "bg-amber-100 text-amber-500" },
+    { id: "sheets", label: "Sheets", icon: <Grid className="h-4 w-4" />, tint: "bg-green-100 text-green-500" },
+    { id: "docs", label: "Docs", icon: <PenSquare className="h-4 w-4" />, tint: "bg-blue-100 text-blue-500" },
+    { id: "logo", label: "Logo", icon: <Bot className="h-4 w-4" />, tint: "bg-purple-100 text-purple-500" },
+  ];
 
   useEffect(() => {
     const loadAgents = async () => {
@@ -62,10 +72,8 @@ export default function AgentsPage() {
   }, [agents, selectedCategory]);
 
   return (
-    <main className="min-h-screen bg-white px-4 py-10 text-gray-900">
+    <main className="h-full overflow-auto bg-white px-4 py-10 text-gray-900">
       <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        <TopNav />
-
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-semibold">Agents</h1>
@@ -85,14 +93,10 @@ export default function AgentsPage() {
         <CategoryFilters
           selected={selectedCategory}
           onSelect={setSelectedCategory}
-          categories={[{ id: "all", label: "All" }, ...categories]}
+          categories={categoriesUI}
         />
 
         <section className="space-y-3">
-          <div className="flex items-center gap-2 text-sm text-gray-700">
-            <Sparkles className="h-4 w-4" />
-            <span>{filteredAgents.length} agents</span>
-          </div>
           {error ? (
             <p className="text-sm text-red-600">Failed to load agents: {error}</p>
           ) : loading ? (
@@ -112,36 +116,6 @@ export default function AgentsPage() {
   );
 }
 
-function TopNav() {
-  const navItems = [
-    { label: "Home", href: "/" },
-    { label: "Agents", href: "/agents" },
-  ];
-
-  return (
-    <div className="flex justify-center gap-3">
-      {navItems.map((item) => (
-        <Button
-          asChild
-          key={item.href}
-          className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-          size="lg"
-          variant="secondary"
-        >
-          <Link href={item.href}>{item.label}</Link>
-        </Button>
-      ))}
-      <Button
-        className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-        size="lg"
-        variant="secondary"
-      >
-        Connect Wallet
-      </Button>
-    </div>
-  );
-}
-
 function CategoryFilters({
   selected,
   onSelect,
@@ -149,7 +123,7 @@ function CategoryFilters({
 }: {
   selected: string;
   onSelect: (value: string) => void;
-  categories: Category[];
+  categories: { id: string; label: string; icon: React.ReactNode; tint: string }[];
 }) {
   return (
     <div className="flex flex-wrap gap-3">
@@ -160,13 +134,18 @@ function CategoryFilters({
             key={category.id}
             type="button"
             onClick={() => onSelect(category.id)}
-            className={`min-w-[120px] rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition ${
+            className={`flex min-w-[80px] items-center gap-2 rounded-full px-2 py-1.5 text-sm font-semibold transition ${
               isSelected
-                ? "bg-gray-900 text-white"
-                : "bg-gray-200 text-gray-800 hover:bg-gray-300"
+                ? "border border-gray-100 bg-gray-50 text-gray-700 shadow-mg"
+                : "border border-gray-100 text-gray-500 hover:bg-gray-300"
             }`}
           >
-            {category.label}
+            {category.icon ? (
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${category.tint}`}>
+                {category.icon}
+              </span>
+            ) : null}
+            <span>{category.label}</span>
           </button>
         );
       })}
