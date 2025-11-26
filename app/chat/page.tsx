@@ -9,11 +9,30 @@ import { cn } from "@/lib/utils";
 import { categories, type Agent, type Category } from "@/lib/agents";
 import { Loader2, Send, Sparkles, Star, UserRound, Wallet } from "lucide-react";
 
-type ChatMessage = {
+type TextMessage = {
   id: string;
+  kind: "text";
   from: "user" | "ai";
   text: string;
 };
+
+type ExecutionMessage = {
+  id: string;
+  kind: "execution";
+  execution: {
+    agentId: string;
+    agentName?: string;
+    result: string;
+    summary: string;
+    reviewSubmitted: boolean;
+    rating: number;
+    reviewText: string;
+    submitting: boolean;
+    reviewMessage: string | null;
+  };
+};
+
+type ChatMessage = TextMessage | ExecutionMessage;
 
 export default function ChatPage() {
   const [view, setView] = useState<"landing" | "chat">("landing");
@@ -29,6 +48,7 @@ export default function ChatPage() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [executing, setExecuting] = useState(false);
   const [lastQuery, setLastQuery] = useState("");
+  const [agentExecuted, setAgentExecuted] = useState(false);
 
   const recommendedAgents = useMemo(() => {
     const filtered = searchResults.filter((agent) =>
@@ -53,8 +73,26 @@ export default function ChatPage() {
   useEffect(() => {
     if (view === "chat" && !selectedAgentId && recommendedAgents[0]) {
       setSelectedAgentId(recommendedAgents[0].id);
+      setAgentExecuted(false);
     }
   }, [view, recommendedAgents, selectedAgentId]);
+
+  const updateExecutionMessage = (
+    executionId: string,
+    updater: (exec: ExecutionMessage["execution"]) => ExecutionMessage["execution"],
+  ) => {
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.kind !== "execution" || msg.id !== executionId) return msg;
+        return { ...msg, execution: updater(msg.execution) };
+      }),
+    );
+  };
+
+  const handleSelectAgent = (agent: Agent) => {
+    setSelectedAgentId(agent.id);
+    setAgentExecuted(false);
+  };
 
   const primaryAgent = recommendedAgents.find((agent) => agent.id === selectedAgentId);
 
@@ -70,9 +108,10 @@ export default function ChatPage() {
 
     setMessages((prev) => [
       ...prev,
-      { id: `user-${now}`, from: "user", text },
+      { id: `user-${now}`, kind: "text", from: "user", text },
       {
         id: `ai-${now}-follow`,
+        kind: "text",
         from: "ai",
         text: follow,
       },
@@ -118,7 +157,7 @@ export default function ChatPage() {
         setSearchResults([]);
         setMessages((prev) => [
           ...prev,
-          { id: `chat-${Date.now()}`, from: "ai", text: aiMessage },
+          { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: aiMessage },
         ]);
         return;
       }
@@ -154,17 +193,17 @@ export default function ChatPage() {
       setSearchResults(results);
 
       if (results[0]) {
-        setSelectedAgentId(results[0].id);
+        handleSelectAgent(results[0]);
         if (payload?.message) {
           setMessages((prev) => [
             ...prev,
-            { id: `chat-${Date.now()}`, from: "ai", text: payload.message },
+            { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: payload.message },
           ]);
         }
       } else if (payload?.message) {
         setMessages((prev) => [
           ...prev,
-          { id: `chat-${Date.now()}`, from: "ai", text: payload.message },
+          { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: payload.message },
         ]);
       }
     } catch (error) {
@@ -179,6 +218,7 @@ export default function ChatPage() {
 
   const executeAgent = async () => {
     if (!selectedAgentId) return;
+    setAgentExecuted(true);
     setExecuting(true);
     try {
       const response = await fetch("/api/execute", {
@@ -195,30 +235,104 @@ export default function ChatPage() {
       const payload = await response.json();
       const success = response.ok && payload?.ok;
       const text = success
-        ? `Executing agent "${payload?.agent?.name ?? selectedAgentId}" with your latest request.`
+        ? payload?.result?.output ??
+          `Executing agent "${payload?.agent?.name ?? selectedAgentId}" with your latest request.`
         : `Failed to execute agent: ${payload?.error ?? "unknown error"}`;
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `exec-${Date.now()}`,
-          from: "ai",
-          text,
-        },
-      ]);
+      if (success) {
+        const execId = `exec-${Date.now()}`;
+        const executionMessage: ExecutionMessage = {
+          id: execId,
+          kind: "execution",
+          execution: {
+            agentId: selectedAgentId,
+            agentName: payload?.agent?.name ?? selectedAgentId,
+            result: payload?.result?.output ?? "Execution completed.",
+            summary:
+              payload?.result?.summary ??
+              `Execution triggered for ${payload?.agent?.name ?? selectedAgentId}.`,
+            reviewSubmitted: false,
+            rating: 5,
+            reviewText: "",
+            submitting: false,
+            reviewMessage: null,
+          },
+        };
+
+        setMessages((prev) => [...prev, executionMessage]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `exec-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text,
+          },
+        ]);
+      }
     } catch (error) {
       setMessages((prev) => [
         ...prev,
         {
           id: `exec-${Date.now()}`,
+          kind: "text",
           from: "ai",
-          text: `Failed to execute agent: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
+          text: `Failed to execute agent: ${error instanceof Error ? error.message : "unknown error"}`,
         },
       ]);
     } finally {
       setExecuting(false);
+    }
+  };
+
+  const submitReview = async (executionId: string) => {
+    updateExecutionMessage(executionId, (exec) => ({
+      ...exec,
+      submitting: true,
+      reviewMessage: null,
+    }));
+    try {
+      const current = messages.find(
+        (msg) => msg.kind === "execution" && msg.id === executionId,
+      ) as ExecutionMessage | undefined;
+
+      if (!current) {
+        throw new Error("Execution not found");
+      }
+
+      const response = await fetch("/api/review", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: current.execution.agentId,
+          rating: current.execution.rating,
+          review: current.execution.reviewText.trim() || null,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? "Failed to submit review");
+      }
+
+      updateExecutionMessage(executionId, (exec) => ({
+        ...exec,
+        reviewSubmitted: true,
+        submitting: false,
+        reviewMessage: "Thanks for your feedback! Your rating has been recorded.",
+      }));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to submit review. Please try again.";
+      updateExecutionMessage(executionId, (exec) => ({
+        ...exec,
+        submitting: false,
+        reviewMessage: message,
+      }));
+    } finally {
     }
   };
 
@@ -242,18 +356,26 @@ export default function ChatPage() {
             prompt={prompt}
             onPromptChange={setPrompt}
             onSend={handleSend}
-          messages={messages}
-          selectedCategory={selectedCategory}
-          recommendedAgents={recommendedAgents}
-          selectedAgent={primaryAgent}
-          // onSelectAgent={setSelectedAgentId}
-          onOpenAgent={(agent) => setAgentModal(agent)}
-          onConfirm={executeAgent}
-          searching={searching}
-          searchError={searchError}
-          executing={executing}
-        />
-      )}
+            messages={messages}
+            selectedCategory={selectedCategory}
+            recommendedAgents={recommendedAgents}
+            selectedAgent={primaryAgent}
+            onOpenAgent={(agent) => setAgentModal(agent)}
+            onSelectAgent={handleSelectAgent}
+            onConfirm={executeAgent}
+            searching={searching}
+            searchError={searchError}
+            executing={executing}
+            agentExecuted={agentExecuted}
+            onRateExecution={(id, value) =>
+              updateExecutionMessage(id, (exec) => ({ ...exec, rating: value }))
+            }
+            onReviewChangeExecution={(id, value) =>
+              updateExecutionMessage(id, (exec) => ({ ...exec, reviewText: value.slice(0, 500) }))
+            }
+            onSubmitReview={submitReview}
+          />
+        )}
       </div>
 
       {agentModal ? (
@@ -374,12 +496,16 @@ function ChatView({
   selectedCategory,
   recommendedAgents,
   selectedAgent,
-  // onSelectAgent,
   onOpenAgent,
+  onSelectAgent,
   onConfirm,
   searching,
   searchError,
   executing,
+  agentExecuted,
+  onRateExecution,
+  onReviewChangeExecution,
+  onSubmitReview,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
@@ -388,12 +514,16 @@ function ChatView({
   selectedCategory: string;
   recommendedAgents: Agent[];
   selectedAgent: Agent | undefined;
-  // onSelectAgent: (id: string) => void;
   onOpenAgent: (agent: Agent) => void;
+  onSelectAgent: (agent: Agent) => void;
   onConfirm: () => void;
   searching: boolean;
   searchError: string | null;
   executing: boolean;
+  agentExecuted: boolean;
+  onRateExecution: (executionId: string, value: number) => void;
+  onReviewChangeExecution: (executionId: string, value: string) => void;
+  onSubmitReview: (executionId: string) => void;
 }) {
   return (
     <section className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
@@ -411,24 +541,61 @@ function ChatView({
         </header>
 
         <div className="flex flex-col gap-4">
-          {messages.map((message) => (
-            <ChatBubble key={message.id} from={message.from}>
-              {message.text}
-            </ChatBubble>
-          ))}
+          {messages.map((message) => {
+            if (message.kind === "text") {
+              return (
+                <ChatBubble key={message.id} from={message.from}>
+                  {message.text}
+                </ChatBubble>
+              );
+            }
 
-          {selectedAgent && (
+            if (message.kind === "execution") {
+              const exec = message.execution;
+              return (
+                <div
+                  key={message.id}
+                  className="space-y-3 rounded-2xl bg-gray-100 p-4 shadow-sm"
+                >
+                  <p className="text-sm font-semibold text-gray-800">Execution Result</p>
+                  <p className="text-sm text-gray-800">{exec.summary}</p>
+                  <div className="rounded-xl bg-white p-3 text-sm text-gray-800 ring-1 ring-gray-200">
+                    {exec.result}
+                  </div>
+                  {!exec.reviewSubmitted ? (
+                    <ReviewBox
+                      rating={exec.rating}
+                      onRate={(value) => onRateExecution(message.id, value)}
+                      review={exec.reviewText}
+                      onReviewChange={(value) => onReviewChangeExecution(message.id, value)}
+                      onSubmit={() => onSubmitReview(message.id)}
+                      submitting={exec.submitting}
+                      message={exec.reviewMessage}
+                    />
+                  ) : (
+                    <p className="text-xs text-green-700">
+                      You have submitted a review for this execution.
+                    </p>
+                  )}
+                </div>
+              );
+            }
+
+            return null;
+          })}
+
+          {selectedAgent && !agentExecuted && (
             <div className="flex flex-col items-start gap-3">
               <AgentCard
                 agent={selectedAgent}
                 highlight
-                note="However, you may select another agent from the right-hand section to work with."
+                note="You may select another agent from the list."
                 onOpen={() => onOpenAgent(selectedAgent)}
               />
               <div className="flex flex-wrap items-center gap-3">
                 <Button
                   onClick={onConfirm}
-                  disabled={executing}
+                  disabled={executing || agentExecuted}
                   className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-black/90"
                 >
                   {executing ? (
@@ -436,6 +603,8 @@ function ChatView({
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Executing...
                     </>
+                  ) : agentExecuted ? (
+                    "Execution completed"
                   ) : (
                     "Confirm & Execute (Enter on button)"
                   )}
@@ -486,6 +655,7 @@ function ChatView({
                 rank={index + 1}
                 active={selectedAgent?.id === agent.id}
                 onOpen={() => onOpenAgent(agent)}
+                // onSelect={() => onSelectAgent(agent)}
               />
             ))}
           </div>
@@ -496,6 +666,69 @@ function ChatView({
         )}
       </aside>
     </section>
+  );
+}
+
+function ReviewBox({
+  rating,
+  onRate,
+  review,
+  onReviewChange,
+  onSubmit,
+  submitting,
+  message,
+}: {
+  rating: number;
+  onRate: (value: number) => void;
+  review: string;
+  onReviewChange: (value: string) => void;
+  onSubmit: () => void;
+  submitting: boolean;
+  message: string | null;
+}) {
+  const stars = [1, 2, 3, 4, 5];
+
+  return (
+    <div className="space-y-3 rounded-xl bg-white p-3 text-sm text-gray-800 ring-1 ring-gray-200">
+      <p className="font-semibold">Rate this agent</p>
+      <div className="flex gap-2">
+        {stars.map((star) => (
+          <button
+            key={star}
+            type="button"
+            onClick={() => onRate(star)}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition",
+              star <= rating
+                ? "border-amber-400 bg-amber-100 text-amber-700"
+                : "border-gray-300 bg-gray-50 text-gray-500",
+            )}
+          >
+            {star}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={review}
+        onChange={(e) => onReviewChange(e.target.value.slice(0, 500))}
+        maxLength={500}
+        placeholder="Optional feedback (max 500 chars)"
+        className="w-full rounded-lg border border-gray-200 bg-gray-50 p-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-gray-300"
+        rows={3}
+      />
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-500">{review.length}/500</span>
+        <Button
+          size="sm"
+          className="rounded-full bg-black text-white hover:bg-black/90"
+          onClick={onSubmit}
+          disabled={submitting}
+        >
+          {submitting ? "Submitting..." : "Submit review"}
+        </Button>
+      </div>
+      {message ? <p className="text-xs text-green-700">{message}</p> : null}
+    </div>
   );
 }
 

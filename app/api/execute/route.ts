@@ -25,11 +25,19 @@ export async function POST(request: Request) {
       );
     }
 
+    const dummyResult = {
+      summary: `Executed '${agent?.name ?? "agent"}' for: ${query || "your request"}`,
+      output: "This is a dummy execution result for testing. Replace with real agent output.",
+      traceId: crypto.randomUUID().slice(0, 8),
+      finishedAt: new Date().toISOString(),
+    };
+
     return NextResponse.json({
       ok: true,
       agent,
       message: `Execution triggered for ${agent?.name ?? agentId}`,
       query,
+      result: dummyResult,
     });
   } catch (error) {
     console.error(error);
