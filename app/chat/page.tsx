@@ -23,7 +23,6 @@ export default function ChatPage() {
   );
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [hasInitialResponse, setHasInitialResponse] = useState(false);
   const [agentModal, setAgentModal] = useState<Agent | null>(null);
   const [searchResults, setSearchResults] = useState<Agent[]>([]);
   const [searching, setSearching] = useState(false);
@@ -79,7 +78,6 @@ export default function ChatPage() {
       },
     ]);
 
-    setHasInitialResponse(true);
     setView("chat");
     setPrompt("");
     setLastQuery(text);
@@ -125,25 +123,33 @@ export default function ChatPage() {
         return;
       }
 
-      const results: Agent[] =
-        payload?.results?.map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          author: item.author ?? "Unknown",
-          description: item.description ?? "",
-          price: item.price ?? 0,
-          rating_avg: item.rating_avg ?? null,
-          rating_count: item.rating_count ?? 0,
-          category: item.category ?? selectedCategory,
-          fitness_score: item.fitness_score ?? 0,
-          similarity: item.similarity ?? 0,
-          score: item.fitness_score ?? 0,
-          rank: item.rank,
-          pricing_model: item.pricing_model ?? "",
-          url: item.url ?? "",
-          test_score: item.test_score ?? null,
-          rationale: item.rationale ?? "",
-        })) ?? [];
+      type RawAgent = Partial<Agent> & {
+        id: string;
+        name: string;
+        similarity?: number;
+        fitness_score?: number;
+        rank?: number;
+      };
+
+      const rawResults: RawAgent[] = Array.isArray(payload?.results) ? payload.results : [];
+      const results: Agent[] = rawResults.map((item) => ({
+        id: item.id,
+        name: item.name,
+        author: item.author ?? "Unknown",
+        description: item.description ?? "",
+        price: item.price ?? 0,
+        rating_avg: item.rating_avg ?? null,
+        rating_count: item.rating_count ?? 0,
+        category: item.category ?? selectedCategory,
+        fitness_score: item.fitness_score ?? 0,
+        similarity: item.similarity ?? 0,
+        score: item.fitness_score ?? 0,
+        rank: item.rank,
+        pricing_model: item.pricing_model ?? "",
+        url: item.url ?? "",
+        test_score: item.test_score ?? null,
+        rationale: item.rationale ?? "",
+      }));
 
       setSearchResults(results);
 
@@ -161,10 +167,11 @@ export default function ChatPage() {
           { id: `chat-${Date.now()}`, from: "ai", text: payload.message },
         ]);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error(error);
       setSearchResults([]);
-      setSearchError(error?.message ?? "Failed to search");
+      const message = error instanceof Error ? error.message : "Failed to search";
+      setSearchError(message);
     } finally {
       setSearching(false);
     }
@@ -199,13 +206,15 @@ export default function ChatPage() {
           text,
         },
       ]);
-    } catch (error: any) {
+    } catch (error) {
       setMessages((prev) => [
         ...prev,
         {
           id: `exec-${Date.now()}`,
           from: "ai",
-          text: `Failed to execute agent: ${error?.message ?? "unknown error"}`,
+          text: `Failed to execute agent: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
         },
       ]);
     } finally {
@@ -237,7 +246,7 @@ export default function ChatPage() {
           selectedCategory={selectedCategory}
           recommendedAgents={recommendedAgents}
           selectedAgent={primaryAgent}
-          onSelectAgent={setSelectedAgentId}
+          // onSelectAgent={setSelectedAgentId}
           onOpenAgent={(agent) => setAgentModal(agent)}
           onConfirm={executeAgent}
           searching={searching}
@@ -365,7 +374,7 @@ function ChatView({
   selectedCategory,
   recommendedAgents,
   selectedAgent,
-  onSelectAgent,
+  // onSelectAgent,
   onOpenAgent,
   onConfirm,
   searching,
@@ -379,7 +388,7 @@ function ChatView({
   selectedCategory: string;
   recommendedAgents: Agent[];
   selectedAgent: Agent | undefined;
-  onSelectAgent: (id: string) => void;
+  // onSelectAgent: (id: string) => void;
   onOpenAgent: (agent: Agent) => void;
   onConfirm: () => void;
   searching: boolean;

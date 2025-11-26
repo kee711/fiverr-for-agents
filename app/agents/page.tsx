@@ -45,8 +45,9 @@ export default function AgentsPage() {
             rating: agent.rating_avg ?? undefined,
           })),
         );
-      } catch (err: any) {
-        setError(err?.message ?? "Failed to load agents");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to load agents";
+        setError(message);
       } finally {
         setLoading(false);
       }

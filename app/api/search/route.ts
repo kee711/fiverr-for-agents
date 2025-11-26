@@ -148,11 +148,18 @@ export async function POST(request: Request) {
     const firstMessage = toolCallDecision.choices[0]?.message;
     const toolCalls = firstMessage?.tool_calls ?? [];
 
+    type FunctionToolCall = Extract<
+      (typeof toolCalls)[number],
+      { type: "function"; function?: { arguments: string; name?: string } }
+    >;
+    const isFunctionToolCall = (call: (typeof toolCalls)[number]): call is FunctionToolCall => {
+      if (call.type !== "function") return false;
+      const fn = (call as { function?: { arguments?: unknown } }).function;
+      return typeof fn?.arguments === "string";
+    };
+
     // If the model decides no tool is needed, just return its response as chat mode.
     if (!toolCalls.length) {
-      
-      console.log("RESPONDED WITHOUT TOOLCALL")
-
       return NextResponse.json({
         ok: true,
         mode: "chat",
@@ -167,8 +174,9 @@ export async function POST(request: Request) {
       embedText(query),
     ]);
 
-    const toolArgs = toolCalls[0]?.function?.arguments
-      ? JSON.parse(toolCalls[0].function.arguments)
+    const functionCall = toolCalls.find(isFunctionToolCall);
+    const toolArgs = functionCall?.function?.arguments
+      ? JSON.parse(functionCall.function.arguments)
       : {};
 
     const rpcTopK = clamp(toNumber(toolArgs?.topK, topK), 1, MAX_TOP_K);
