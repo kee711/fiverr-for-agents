@@ -35,6 +35,8 @@ export const categories: Category[] = [
   { id: "marketing", label: "Marketing" },
   { id: "analysis", label: "Analysis" },
   { id: "ops", label: "Operations" },
+  { id: "toon", label: "Cartoon" },
+  { id: "research", label: "Research" },
 ];
 
 export const agents: Agent[] = [
@@ -57,12 +59,23 @@ export const agents: Agent[] = [
         type: "image",
         title: "Slide visual sample",
         url: "https://via.placeholder.com/640x360.png?text=Sample+Slide",
-        caption: "Placeholder preview for a slide visual (replace with real asset).",
+        caption:
+          "Placeholder preview for a slide visual (replace with real asset).",
       },
     ],
     reviews: [
-      { id: "r1", user: "Jin", rating: 4.7, comment: "Crisp flow, good academic tone." },
-      { id: "r2", user: "Sara", rating: 4.5, comment: "Clear slide hierarchy and pacing." },
+      {
+        id: "r1",
+        user: "Jin",
+        rating: 4.7,
+        comment: "Crisp flow, good academic tone.",
+      },
+      {
+        id: "r2",
+        user: "Sara",
+        rating: 4.5,
+        comment: "Clear slide hierarchy and pacing.",
+      },
     ],
   },
   {
@@ -82,7 +95,14 @@ export const agents: Agent[] = [
         code: `import pptx\n\n# Generate slide bullets from a brief\nbrief = "AI startup pitch"\nprint("Generating structure for:", brief)`,
       },
     ],
-    reviews: [{ id: "r3", user: "Mo", rating: 4.4, comment: "Concise decks, quick turnaround." }],
+    reviews: [
+      {
+        id: "r3",
+        user: "Mo",
+        rating: 4.4,
+        comment: "Concise decks, quick turnaround.",
+      },
+    ],
   },
   {
     id: "ppt-3",

@@ -121,7 +121,9 @@ export default function RegisterPage() {
           <div className="grid gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">Name</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Name
+                </label>
                 <Input
                   placeholder="Agent name"
                   value={form.name}
@@ -129,19 +131,22 @@ export default function RegisterPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">Creator Name</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Creator Name
+                </label>
                 <Input
                   placeholder="Alice"
                   value={form.author}
                   onChange={(e) => handleChange("author", e.target.value)}
                 />
               </div>
-              
             </div>
 
             <div className="flex flex-col space-y-1">
               <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">Category</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Category
+                </label>
                 <select
                   value={form.category}
                   onChange={(e) => handleChange("category", e.target.value)}
@@ -155,19 +160,23 @@ export default function RegisterPage() {
                 </select>
               </div>
               <div className="flex flex-col space-y-1">
-                <label className="text-sm font-medium text-gray-700">Description</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Description
+                </label>
                 <textarea
                   placeholder="Describe what this agent does best"
                   value={form.description}
                   onChange={(e) => handleChange("description", e.target.value)}
-                  className="min-h-[120px] rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none focus:border-gray-500"
+                  className="min-h-[120px] rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-gray-500"
                 />
               </div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">Endpoint URL</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Endpoint URL
+                </label>
                 <Input
                   placeholder="https://api.example.com/agent"
                   value={form.url}
@@ -175,7 +184,9 @@ export default function RegisterPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">Creator Address</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Creator Address
+                </label>
                 <Input
                   placeholder="0x..."
                   value={form.address}
@@ -188,7 +199,9 @@ export default function RegisterPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">Pricing Model</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Pricing Model
+                </label>
                 <Input
                   placeholder="per_run / subscription"
                   value={form.pricingModel}
@@ -196,7 +209,9 @@ export default function RegisterPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">Default Price</label>
+                <label className="text-sm font-medium text-gray-700">
+                  Default Price
+                </label>
                 <Input
                   placeholder="0.001"
                   value={form.price}
@@ -204,12 +219,13 @@ export default function RegisterPage() {
                 />
               </div>
             </div>
-
           </div>
 
           <div className="flex flex-col gap-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-gray-800">Validation</div>
+              <div className="text-sm font-semibold text-gray-800">
+                Validation
+              </div>
               <div className="flex gap-2">
                 <Button
                   onClick={handleTest}
@@ -250,7 +266,8 @@ export default function RegisterPage() {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-green-700">
                     <CheckCircle2 className="h-4 w-4" />
-                    Test passed at {new Date(testResult.testedAt).toLocaleTimeString()}
+                    Test passed at{" "}
+                    {new Date(testResult.testedAt).toLocaleTimeString()}
                   </div>
                   <p>Score: {testResult.score.toFixed(1)}</p>
                   <p>{testResult.notes}</p>
