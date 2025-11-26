@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -96,10 +95,8 @@ export default function RegisterPage() {
     !allFilled || testStatus !== "success" || registerStatus === "loading";
 
   return (
-    <main className="min-h-screen bg-white px-4 py-10 text-gray-900">
-      <div className="mx-auto flex max-w-4xl flex-col gap-10">
-        <TopNav />
-
+    <main className="h-full overflow-auto bg-white px-4 py-10 text-gray-900">
+      <div className="mx-auto flex max-w-4xl flex-col gap-10 pb-10">
         <header className="flex items-center justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-3xl font-semibold">Register Agent</h1>
@@ -107,7 +104,7 @@ export default function RegisterPage() {
               Run AI validation before adding your agent.
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700">
+          <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-400">
             <Sparkles className="h-4 w-4" />
             AI-powered validation
           </div>
@@ -294,35 +291,5 @@ export default function RegisterPage() {
         </section>
       </div>
     </main>
-  );
-}
-
-function TopNav() {
-  const navItems = [
-    { label: "Home", href: "/" },
-    { label: "Agents", href: "/agents" },
-  ];
-
-  return (
-    <div className="flex justify-center gap-3">
-      {navItems.map((item) => (
-        <Button
-          asChild
-          key={item.href}
-          className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-          size="lg"
-          variant="secondary"
-        >
-          <Link href={item.href}>{item.label}</Link>
-        </Button>
-      ))}
-      <Button
-        className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
-        size="lg"
-        variant="secondary"
-      >
-        Connect Wallet
-      </Button>
-    </div>
   );
 }

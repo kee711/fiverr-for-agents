@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
+import { AppFrame } from "@/components/app-frame";
 import "./globals.css";
 import Providers from "@/components/Providers";
 
@@ -34,7 +35,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <Providers>{children}</Providers>
+          <Providers> <AppFrame>{children}</AppFrame></Providers>
         </ThemeProvider>
       </body>
     </html>

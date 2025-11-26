@@ -1,22 +1,60 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
+import { useHeaderVisibility } from "@/components/app-frame";
 import { cn } from "@/lib/utils";
 import { agents, categories, type Agent, type Category } from "@/lib/agents";
 import { Send, Sparkles, Star, UserRound, Wallet } from "lucide-react";
 import { useSignOut } from "@coinbase/cdp-hooks";
 import GlobalHeader from "@/components/GlobalHeader";
+import { categories, type Agent } from "@/lib/agents";
+import {
+  Bot,
+  Feather,
+  Grid,
+  Loader2,
+  Mic,
+  Palette,
+  PenSquare,
+  Plus,
+  Presentation,
+  Send,
+  Star,
+  UserRound,
+  Wallet,
+  X,
+} from "lucide-react";
 
-type ChatMessage = {
+type TextMessage = {
   id: string;
+  kind: "text";
   from: "user" | "ai";
   text: string;
 };
 
+type ExecutionMessage = {
+  id: string;
+  kind: "execution";
+  execution: {
+    agentId: string;
+    agentName?: string;
+    result: string;
+    summary: string;
+    reviewSubmitted: boolean;
+    rating: number;
+    reviewText: string;
+    submitting: boolean;
+    reviewMessage: string | null;
+  };
+};
+
+type ChatMessage = TextMessage | ExecutionMessage;
+
 export default function ChatPage() {
+  const { setShowHeader } = useHeaderVisibility();
   const [view, setView] = useState<"landing" | "chat">("landing");
   const [prompt, setPrompt] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>(
@@ -24,74 +62,308 @@ export default function ChatPage() {
   );
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [hasInitialResponse, setHasInitialResponse] = useState(false);
   const [agentModal, setAgentModal] = useState<Agent | null>(null);
+  const [searchResults, setSearchResults] = useState<Agent[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [lastQuery, setLastQuery] = useState("");
+  const [agentExecuted, setAgentExecuted] = useState(false);
 
   const recommendedAgents = useMemo(() => {
-    const filtered = agents.filter(
-      (agent) => agent.category === selectedCategory
+    const filtered = searchResults.filter((agent) =>
+      selectedCategory ? agent.category === selectedCategory : true,
     );
-    const list = filtered.length ? filtered : agents;
-    return [...list].sort((a, b) => {
-      if (b.score === a.score) {
-        return a.price - b.price;
+    const scoredAgents = filtered.length ? filtered : searchResults;
+
+    const sorted = [...scoredAgents].sort((a, b) => {
+      const aScore = a.fitness_score ?? a.score ?? a.similarity ?? 0;
+      const bScore = b.fitness_score ?? b.score ?? b.similarity ?? 0;
+      if (bScore === aScore) {
+        const aPrice = a.price ?? 0;
+        const bPrice = b.price ?? 0;
+        return aPrice - bPrice;
       }
-      return b.score - a.score;
+      return bScore - aScore;
     });
-  }, [selectedCategory]);
+
+    return sorted.map((agent, index) => ({ ...agent, rank: agent.rank ?? index + 1 }));
+  }, [searchResults, selectedCategory]);
 
   useEffect(() => {
     if (view === "chat" && !selectedAgentId && recommendedAgents[0]) {
       setSelectedAgentId(recommendedAgents[0].id);
+      setAgentExecuted(false);
     }
   }, [view, recommendedAgents, selectedAgentId]);
 
-  const primaryAgent =
-    recommendedAgents.find((agent) => agent.id === selectedAgentId) ??
-    recommendedAgents[0] ??
-    agents[0];
+  const updateExecutionMessage = (
+    executionId: string,
+    updater: (exec: ExecutionMessage["execution"]) => ExecutionMessage["execution"],
+  ) => {
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.kind !== "execution" || msg.id !== executionId) return msg;
+        return { ...msg, execution: updater(msg.execution) };
+      }),
+    );
+  };
 
-  const handleSend = () => {
+  const handleSelectAgent = (agent: Agent) => {
+    setSelectedAgentId(agent.id);
+    setAgentExecuted(false);
+  };
+
+  const primaryAgent = recommendedAgents.find((agent) => agent.id === selectedAgentId);
+
+  useEffect(() => {
+    setShowHeader(view === "landing");
+    return () => setShowHeader(true);
+  }, [view, setShowHeader]);
+
+  const handleSend = async () => {
     const text = prompt.trim();
     if (!text) return;
 
     const now = Date.now();
-    const baseAgent = primaryAgent ?? recommendedAgents[0];
-    const intro =
-      "Understood. I'll recommend a suitable agent based on vetted runs for similar tasks.";
     const follow =
-      baseAgent && view === "landing"
-        ? `The most suitable agent right now is ${baseAgent.name}. You can also pick another from the right-hand Recommended List.`
-        : "Updating the recommendation list based on your latest note.";
+      view === "landing"
+        ? "Searching for the best-fitting agents now."
+        : "Refreshing the recommendations based on your latest note.";
 
     setMessages((prev) => [
       ...prev,
-      { id: `user-${now}`, from: "user", text },
-      {
-        id: `ai-${now}-intro`,
-        from: "ai",
-        text: !hasInitialResponse ? intro : "Got it. Let me adjust the match.",
-      },
+      { id: `user-${now}`, kind: "text", from: "user", text },
       {
         id: `ai-${now}-follow`,
+        kind: "text",
         from: "ai",
         text: follow,
       },
     ]);
 
-    setHasInitialResponse(true);
     setView("chat");
     setPrompt("");
+    setLastQuery(text);
 
-    if (!selectedAgentId && baseAgent) {
-      setSelectedAgentId(baseAgent.id);
+    await runSearch(text);
+  };
+
+  const runSearch = async (queryText: string) => {
+    setSearching(true);
+    setSearchError(null);
+
+    try {
+      const response = await fetch("/api/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: queryText,
+          topK: 10,
+          matchThreshold: 0.35,
+          category: selectedCategory,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Search failed");
+      }
+
+      const payload = await response.json();
+      if (!payload?.ok) {
+        throw new Error(payload?.error ?? "Search failed");
+      }
+
+      if (payload?.mode === "chat") {
+        const aiMessage = payload?.message ?? "I can help with that.";
+        setSearchResults([]);
+        setMessages((prev) => [
+          ...prev,
+          { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: aiMessage },
+        ]);
+        return;
+      }
+
+      type RawAgent = Partial<Agent> & {
+        id: string;
+        name: string;
+        similarity?: number;
+        fitness_score?: number;
+        rank?: number;
+      };
+
+      const rawResults: RawAgent[] = Array.isArray(payload?.results) ? payload.results : [];
+      const results: Agent[] = rawResults.map((item) => ({
+        id: item.id,
+        name: item.name,
+        author: item.author ?? "Unknown",
+        description: item.description ?? "",
+        price: item.price ?? 0,
+        rating_avg: item.rating_avg ?? null,
+        rating_count: item.rating_count ?? 0,
+        category: item.category ?? selectedCategory,
+        fitness_score: item.fitness_score ?? 0,
+        similarity: item.similarity ?? 0,
+        score: item.fitness_score ?? 0,
+        rank: item.rank,
+        pricing_model: item.pricing_model ?? "",
+        url: item.url ?? "",
+        test_score: item.test_score ?? null,
+        rationale: item.rationale ?? "",
+      }));
+
+      setSearchResults(results);
+
+      if (results[0]) {
+        handleSelectAgent(results[0]);
+        if (payload?.message) {
+          setMessages((prev) => [
+            ...prev,
+            { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: payload.message },
+          ]);
+        }
+      } else if (payload?.message) {
+        setMessages((prev) => [
+          ...prev,
+          { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: payload.message },
+        ]);
+      }
+    } catch (error) {
+      console.error(error);
+      setSearchResults([]);
+      const message = error instanceof Error ? error.message : "Failed to search";
+      setSearchError(message);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const executeAgent = async () => {
+    if (!selectedAgentId) return;
+    setAgentExecuted(true);
+    setExecuting(true);
+    try {
+      const response = await fetch("/api/execute", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: selectedAgentId,
+          query: lastQuery,
+        }),
+      });
+
+      const payload = await response.json();
+      const success = response.ok && payload?.ok;
+      const text = success
+        ? payload?.result?.output ??
+          `Executing agent "${payload?.agent?.name ?? selectedAgentId}" with your latest request.`
+        : `Failed to execute agent: ${payload?.error ?? "unknown error"}`;
+
+      if (success) {
+        const execId = `exec-${Date.now()}`;
+        const executionMessage: ExecutionMessage = {
+          id: execId,
+          kind: "execution",
+          execution: {
+            agentId: selectedAgentId,
+            agentName: payload?.agent?.name ?? selectedAgentId,
+            result: payload?.result?.output ?? "Execution completed.",
+            summary:
+              payload?.result?.summary ??
+              `Execution triggered for ${payload?.agent?.name ?? selectedAgentId}.`,
+            reviewSubmitted: false,
+            rating: 5,
+            reviewText: "",
+            submitting: false,
+            reviewMessage: null,
+          },
+        };
+
+        setMessages((prev) => [...prev, executionMessage]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `exec-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text,
+          },
+        ]);
+      }
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `exec-${Date.now()}`,
+          kind: "text",
+          from: "ai",
+          text: `Failed to execute agent: ${error instanceof Error ? error.message : "unknown error"}`,
+        },
+      ]);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const submitReview = async (executionId: string) => {
+    updateExecutionMessage(executionId, (exec) => ({
+      ...exec,
+      submitting: true,
+      reviewMessage: null,
+    }));
+    try {
+      const current = messages.find(
+        (msg) => msg.kind === "execution" && msg.id === executionId,
+      ) as ExecutionMessage | undefined;
+
+      if (!current) {
+        throw new Error("Execution not found");
+      }
+
+      const response = await fetch("/api/review", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: current.execution.agentId,
+          rating: current.execution.rating,
+          review: current.execution.reviewText.trim() || null,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? "Failed to submit review");
+      }
+
+      updateExecutionMessage(executionId, (exec) => ({
+        ...exec,
+        reviewSubmitted: true,
+        submitting: false,
+        reviewMessage: "Thanks for your feedback! Your rating has been recorded.",
+      }));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to submit review. Please try again.";
+      updateExecutionMessage(executionId, (exec) => ({
+        ...exec,
+        submitting: false,
+        reviewMessage: message,
+      }));
+    } finally {
     }
   };
 
   return (
-    <main className="min-h-screen bg-white px-4 py-10 flex flex-col items-center text-gray-900">
-      <GlobalHeader />
-      <div className="mx-auto flex max-w-6xl flex-col items-center gap-16">
+    <>
+      <div className="flex h-full min-h-[calc(100vh-48px)] w-full flex-col gap-6 py-6 overflow-hidden">
         {view === "landing" ? (
           <LandingView
             prompt={prompt}
@@ -111,8 +383,19 @@ export default function ChatPage() {
             selectedCategory={selectedCategory}
             recommendedAgents={recommendedAgents}
             selectedAgent={primaryAgent}
-            onSelectAgent={setSelectedAgentId}
             onOpenAgent={(agent) => setAgentModal(agent)}
+            onConfirm={executeAgent}
+            searching={searching}
+            searchError={searchError}
+            executing={executing}
+            agentExecuted={agentExecuted}
+            onRateExecution={(id, value) =>
+              updateExecutionMessage(id, (exec) => ({ ...exec, rating: value }))
+            }
+            onReviewChangeExecution={(id, value) =>
+              updateExecutionMessage(id, (exec) => ({ ...exec, reviewText: value.slice(0, 500) }))
+            }
+            onSubmitReview={submitReview}
           />
         )}
       </div>
@@ -128,7 +411,7 @@ export default function ChatPage() {
           }}
         />
       ) : null}
-    </main>
+    </>
   );
 }
 
@@ -143,51 +426,61 @@ function LandingView({
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   selectedCategory: string;
   onCategoryChange: (value: string) => void;
   recommendedAgents: Agent[];
   onOpenAgent: (agent: Agent) => void;
 }) {
-  return (
-    <section className="flex flex-col items-center gap-10 mt-52">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Welcome!</h1>
-      </div>
+  const categoriesUI: { id: string; label: string; icon: React.ReactNode; tint: string }[] = [
+    { id: "scraper", label: "Scraper", icon: <Bot className="h-5 w-5" />, tint: "bg-gray-100 text-gray-600" },
+    { id: "cartoonist", label: "Cartoonist", icon: <Palette className="h-5 w-5" />, tint: "bg-orange-100 text-orange-500" },
+    { id: "slides", label: "Slides", icon: <Presentation className="h-5 w-5" />, tint: "bg-amber-100 text-amber-500" },
+    { id: "sheets", label: "Sheets", icon: <Grid className="h-5 w-5" />, tint: "bg-green-100 text-green-500" },
+    { id: "docs", label: "Docs", icon: <PenSquare className="h-5 w-5" />, tint: "bg-blue-100 text-blue-500" },
+    { id: "logo", label: "Logo", icon: <Feather className="h-5 w-5" />, tint: "bg-purple-100 text-purple-500" },
+  ];
 
-      <div className="flex w-full flex-col gap-4 items-center">
+  return (
+    <section className="flex flex-col items-center gap-12 pt-32">
+      <h1 className="text-3xl font-semibold tracking-tight text-gray-900">어떤 도움이 필요하신가요?</h1>
+
+      <div className="flex w-[70%] flex-col items-center gap-6">
         <PromptComposer
           prompt={prompt}
           onPromptChange={onPromptChange}
           onSend={onSend}
-          placeholder="Frame your request and let AI shortlist the right agent..."
+          placeholder="무엇이든 물어보세요"
+          landing
         />
 
         <CategoryScroller
-          categories={categories}
+          categories={categoriesUI}
           selectedCategory={selectedCategory}
           onCategoryChange={onCategoryChange}
         />
       </div>
 
-      <div className="w-full space-y-4">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-gray-700" />
-          <h2 className="text-xl font-semibold">PPT Agents</h2>
-          <span className="text-sm text-gray-500">
-            Vetted by AI with recorded runs and pricing signals.
-          </span>
+      <div className="w-[80%] space-y-4 mt-8">
+        <div className="flex items-center justify-center gap-3 text-sm font-semibold text-gray-600">
+          <span className="h-px w-16 bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
+          추천
+          <span className="h-px w-16 bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
         </div>
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {recommendedAgents.slice(0, 4).map((agent, index) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              rank={index + 1}
-              onOpen={() => onOpenAgent(agent)}
-            />
-          ))}
-        </div>
+        {recommendedAgents.length ? (
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {recommendedAgents.slice(0, 4).map((agent, index) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                rank={index + 1}
+                onOpen={() => onOpenAgent(agent)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">Run a search to see agent results here.</p>
+        )}
       </div>
     </section>
   );
@@ -201,22 +494,48 @@ function ChatView({
   selectedCategory,
   recommendedAgents,
   selectedAgent,
-  onSelectAgent,
   onOpenAgent,
+  onConfirm,
+  searching,
+  searchError,
+  executing,
+  agentExecuted,
+  onRateExecution,
+  onReviewChangeExecution,
+  onSubmitReview,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   messages: ChatMessage[];
   selectedCategory: string;
   recommendedAgents: Agent[];
   selectedAgent: Agent | undefined;
-  onSelectAgent: (id: string) => void;
   onOpenAgent: (agent: Agent) => void;
+  onConfirm: () => void;
+  searching: boolean;
+  searchError: string | null;
+  executing: boolean;
+  agentExecuted: boolean;
+  onRateExecution: (executionId: string, value: number) => void;
+  onReviewChangeExecution: (executionId: string, value: string) => void;
+  onSubmitReview: (executionId: string) => void;
 }) {
+  const hasRecommended = recommendedAgents.length > 0;
+
   return (
-    <section className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] mt-12">
-      <div className="flex flex-col gap-6">
+    <section
+      className={cn(
+        "relative flex h-full w-full items-stretch gap-6 overflow-hidden transition-all duration-300",
+        hasRecommended ? "pr-4" : "justify-center",
+      )}
+    >
+      <div
+        className={cn(
+          "flex h-full flex-col gap-4 overflow-hidden transition-all duration-300",
+          hasRecommended ? "flex-[2]" : "w-full max-w-4xl",
+        )}
+      >
         <header className="flex items-center justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.12em] text-gray-500">
@@ -224,59 +543,202 @@ function ChatView({
             </p>
             <h2 className="text-2xl font-semibold">Request PPT</h2>
           </div>
-          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+          {/* <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
             AI compares verified runs, then ranks for you
-          </span>
+          </span> */}
         </header>
 
-        <div className="flex flex-col gap-4">
-          {messages.map((message) => (
-            <ChatBubble key={message.id} from={message.from}>
-              {message.text}
-            </ChatBubble>
-          ))}
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto pr-2 pb-28">
+          {messages.map((message) => {
+            if (message.kind === "text") {
+              return (
+                <ChatBubble key={message.id} from={message.from}>
+                  {message.text}
+                </ChatBubble>
+              );
+            }
 
-          {selectedAgent && (
-            <div className="flex justify-start">
+            if (message.kind === "execution") {
+              const exec = message.execution;
+              return (
+                <div
+                  key={message.id}
+                  className="space-y-3 rounded-2xl bg-gray-100 p-4 shadow-sm"
+                >
+                  <p className="text-sm font-semibold text-gray-800">Execution Result</p>
+                  <p className="text-sm text-gray-800">{exec.summary}</p>
+                  <div className="rounded-xl bg-white p-3 text-sm text-gray-800 ring-1 ring-gray-200">
+                    {exec.result}
+                  </div>
+                  {!exec.reviewSubmitted ? (
+                    <ReviewBox
+                      rating={exec.rating}
+                      onRate={(value) => onRateExecution(message.id, value)}
+                      review={exec.reviewText}
+                      onReviewChange={(value) => onReviewChangeExecution(message.id, value)}
+                      onSubmit={() => onSubmitReview(message.id)}
+                      submitting={exec.submitting}
+                      message={exec.reviewMessage}
+                    />
+                  ) : (
+                    <p className="text-xs text-green-700">
+                      You have submitted a review for this execution.
+                    </p>
+                  )}
+                </div>
+              );
+            }
+
+            return null;
+          })}
+
+          {selectedAgent && !agentExecuted && (
+            <div className="flex flex-col items-start gap-3">
               <AgentCard
                 agent={selectedAgent}
                 highlight
-                note="However, you may select another agent from the right-hand section to work with."
+                note="You may select another agent from the list."
                 onOpen={() => onOpenAgent(selectedAgent)}
               />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={onConfirm}
+                  disabled={executing || agentExecuted}
+                  className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-black/90"
+                >
+                  {executing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Executing...
+                    </>
+                  ) : agentExecuted ? (
+                    "Execution completed"
+                  ) : (
+                    "Confirm"
+                  )}c
+                </Button>
+              </div>
             </div>
           )}
         </div>
 
-        <PromptComposer
-          prompt={prompt}
-          onPromptChange={onPromptChange}
-          onSend={onSend}
-          placeholder="Add more details or ask to keep going..."
-          minimal
-        />
+        <div className="pointer-events-none sticky bottom-0 z-10 mt-auto bg-white/90 pb-2">
+          <div className="pointer-events-auto">
+            <PromptComposer
+              prompt={prompt}
+              onPromptChange={onPromptChange}
+              onSend={onSend}
+              placeholder="Add more details or ask to keep going..."
+            />
+          </div>
+        </div>
       </div>
 
-      <aside className="rounded-3xl bg-gray-50 p-5 shadow-sm">
+      <aside
+        className={cn(
+          "flex max-h-full flex-col overflow-hidden rounded-3xl bg-gray-50 p-5 shadow-sm transition-all duration-300",
+          hasRecommended
+            ? "flex-[1] translate-x-0 opacity-100"
+            : "pointer-events-none w-0 -translate-x-6 opacity-0",
+        )}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-xl font-semibold">Recommended List</h3>
-          <span className="text-xs text-gray-500">Ranked by score & price</span>
+          <span className="flex items-center gap-2 text-xs text-gray-500">
+            {searching ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Searching...
+              </>
+            ) : (
+              "Ranked by score & price"
+            )}
+          </span>
         </div>
-        <div className="flex flex-col gap-4">
-          {recommendedAgents.map((agent, index) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              compact
-              rank={index + 1}
-              active={selectedAgent?.id === agent.id}
-              onSelect={() => onSelectAgent(agent.id)}
-              onOpen={() => onOpenAgent(agent)}
-            />
-          ))}
-        </div>
+        {searchError ? (
+          <p className="mb-3 text-xs text-red-600">
+            Search error: {searchError}
+          </p>
+        ) : null}
+        {hasRecommended ? (
+          <div className="flex flex-col gap-4 overflow-y-auto">
+            {recommendedAgents.map((agent, index) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                compact
+                rank={index + 1}
+                active={selectedAgent?.id === agent.id}
+                onOpen={() => onOpenAgent(agent)}
+              />
+            ))}
+          </div>
+        ) : null}
       </aside>
     </section>
+  );
+}
+
+function ReviewBox({
+  rating,
+  onRate,
+  review,
+  onReviewChange,
+  onSubmit,
+  submitting,
+  message,
+}: {
+  rating: number;
+  onRate: (value: number) => void;
+  review: string;
+  onReviewChange: (value: string) => void;
+  onSubmit: () => void;
+  submitting: boolean;
+  message: string | null;
+}) {
+  const stars = [1, 2, 3, 4, 5];
+
+  return (
+    <div className="space-y-3 rounded-xl bg-white p-3 text-sm text-gray-800 ring-1 ring-gray-200">
+      <p className="font-semibold">Rate this agent</p>
+      <div className="flex gap-2">
+        {stars.map((star) => (
+          <button
+            key={star}
+            type="button"
+            onClick={() => onRate(star)}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition",
+              star <= rating
+                ? "border-amber-400 bg-amber-100 text-amber-700"
+                : "border-gray-300 bg-gray-50 text-gray-500",
+            )}
+          >
+            {star}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={review}
+        onChange={(e) => onReviewChange(e.target.value.slice(0, 500))}
+        maxLength={500}
+        placeholder="Optional feedback (max 500 chars)"
+        className="w-full rounded-lg border border-gray-200 bg-gray-50 p-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-gray-300"
+        rows={3}
+      />
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-500">{review.length}/500</span>
+        <Button
+          size="sm"
+          className="rounded-full bg-black text-white hover:bg-black/90"
+          onClick={onSubmit}
+          disabled={submitting}
+        >
+          {submitting ? "Submitting..." : "Submit review"}
+        </Button>
+      </div>
+      {message ? <p className="text-xs text-green-700">{message}</p> : null}
+    </div>
   );
 }
 
@@ -285,55 +747,101 @@ function PromptComposer({
   onPromptChange,
   onSend,
   placeholder,
-  minimal,
+  landing,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
   placeholder: string;
-  minimal?: boolean;
+  landing?: boolean;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [textHeight, setTextHeight] = useState(72);
+
+  const handleChange = (value: string, target?: HTMLTextAreaElement) => {
+    onPromptChange(value);
+    const el = target ?? textareaRef.current;
+    if (el) {
+      el.style.height = "auto";
+      const newHeight = Math.max(40, Math.min(el.scrollHeight, 200));
+      el.style.height = `${newHeight}px`;
+      setTextHeight(newHeight);
+    }
+  };
+
   return (
     <div
       className={cn(
-        "flex w-full items-center gap-3 rounded-3xl bg-gray-100 px-5",
-        minimal ? "py-3" : "py-5 shadow-sm"
+        "flex w-full flex-col rounded-[32px] border border-gray-200 bg-white shadow-sm transition",
+        landing ? "px-3 py-3" : "px-5 py-4",
       )}
     >
-      <input
-        value={prompt}
-        onChange={(e) => onPromptChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            onSend();
-          }
-        }}
-        placeholder={placeholder}
-        className="flex-1 bg-transparent text-base outline-none placeholder:text-gray-400"
-      />
-      <button
-        type="button"
-        onClick={onSend}
-        className="flex h-11 w-11 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/80"
+      <div
+        className="flex w-full flex-col gap-3"
       >
-        <Send className="h-5 w-5" />
-      </button>
+        <textarea
+          ref={textareaRef}
+          value={prompt}
+          onChange={(e) => handleChange(e.target.value, e.target)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onSend();
+            }
+          }}
+          placeholder={placeholder}
+          className={cn(
+            "w-full p-3 resize-none bg-transparent text-base text-gray-900 outline-none placeholder:text-gray-400",
+            landing ? "min-h-[32px] leading-relaxed" : "",
+          )}
+          style={{ height: `${textHeight}px` }}
+        />
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        <button
+          type="button"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-200"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-200"
+          >
+            <Mic className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={onSend}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/80"
+          >
+            <Send className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
+
+type CategoryOption = {
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  tint?: string;
+};
 
 function CategoryScroller({
   categories,
   selectedCategory,
   onCategoryChange,
 }: {
-  categories: Category[];
+  categories: CategoryOption[];
   selectedCategory: string;
   onCategoryChange: (value: string) => void;
 }) {
   return (
-    <div className="flex gap-3 overflow-x-auto bg-blue-300 w-fit">
+    <div className="flex gap-4 overflow-x-auto pb-2">
       {categories.map((category) => {
         const isSelected = category.id === selectedCategory;
         return (
@@ -342,13 +850,28 @@ function CategoryScroller({
             type="button"
             onClick={() => onCategoryChange(category.id)}
             className={cn(
-              "min-w-[150px] rounded-xl px-4 py-3 text-left text-sm font-semibold shadow-sm transition",
-              isSelected
-                ? "bg-gray-400 text-white"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              "flex min-w-[120px] flex-col items-center gap-2 rounded-xl px-3 py-3 text-sm font-semibold transition",
+              "text-gray-600 hover:-translate-y-[2px]",
             )}
           >
-            {category.label}
+            <span
+              className={cn(
+                "flex h-12 w-12 items-center justify-center rounded-full text-base",
+                isSelected
+                  ? "bg-gray-50 shadow-lg"
+                  : category.tint ?? "bg-gray-100 text-gray-600",
+              )}
+            >
+              {category.icon}
+            </span>
+            <span
+              className={cn(
+                "text-xs font-semibold leading-tight text-center",
+                isSelected ? "text-gray-900" : "text-gray-600",
+              )}
+            >
+              {category.label}
+            </span>
           </button>
         );
       })}
@@ -374,7 +897,13 @@ function ChatBubble({
         alignClass
       )}
     >
-      {children}
+      {typeof children === "string" ? (
+        <div className="prose prose-sm max-w-none text-gray-800 prose-p:my-1 prose-li:my-0 prose-code:rounded prose-code:bg-gray-200 prose-code:px-1 prose-code:py-0.5">
+          <ReactMarkdown>{children}</ReactMarkdown>
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -389,6 +918,8 @@ function AgentModal({
   onUseAgent: () => void;
 }) {
   const [tab, setTab] = useState<"about" | "example" | "reviews">("about");
+  const priceValue = agent.price ?? 0;
+  const ratingValue = agent.rating_avg ?? agent.rating ?? 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-10">
@@ -397,43 +928,46 @@ function AgentModal({
           type="button"
           aria-label="Close"
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-full bg-white px-3 py-1 text-xs font-semibold text-gray-600 shadow"
+          className="absolute right-4 top-4 rounded-full px-2 py-2 text-xs font-semibold text-gray-600"
         >
-          Close
+          <X className="h-4 w-4"/>
         </button>
 
         <div className="flex flex-col gap-4">
           <div className="flex items-start justify-between">
             <div>
               <h3 className="text-2xl font-semibold">{agent.name}</h3>
-              <div className="mt-2 flex items-center gap-2 text-sm text-gray-700">
-                <UserRound className="h-4 w-4" />
-                <span>{agent.author}</span>
-              </div>
+              <div className="flex items-center mt-2 mb-2 gap-3 text-sm font-semibold text-gray-800">
+                <div className="flex items-center gap-1">
+                  <Wallet className="h-4 w-4" />
+                  <span>{priceValue.toFixed(3)}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Star className="h-4 w-4" />
+                  <span>{ratingValue.toFixed(1)}</span>
+                </div>
+                <div className="flex items-center gap-1 text-sm text-gray-700">
+                  <UserRound className="h-4 w-4" />
+                  <span>{agent.author}</span>
+                </div>
+            </div>
             </div>
             <div className="flex items-center gap-3 text-sm font-semibold text-gray-800">
-              <div className="flex items-center gap-1">
-                <Wallet className="h-4 w-4" />
-                <span>{agent.price.toFixed(3)}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Star className="h-4 w-4" />
-                <span>{agent.rating.toFixed(1)}</span>
-              </div>
+              
             </div>
           </div>
 
-          <div className="flex gap-4">
+          <div className="flex gap-1">
             {(["about", "example", "reviews"] as const).map((key) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => setTab(key)}
                 className={cn(
-                  "rounded-full px-4 py-2 text-sm font-semibold transition",
+                  "rounded-full px-3 py-1 text-sm font-semibold transition",
                   tab === key
-                    ? "bg-gray-200 text-gray-900 shadow-sm"
-                    : "text-gray-600 hover:bg-gray-100"
+                    ? "bg-gray-200 text-gray-900 sha"
+                    : "text-gray-600 hover:bg-gray-100",
                 )}
               >
                 {key === "about"
@@ -448,10 +982,8 @@ function AgentModal({
           <div className="rounded-2xl bg-gray-100 p-5">
             {tab === "about" && (
               <div className="space-y-2">
-                <p className="text-base font-semibold text-gray-900">
-                  About this Agent
-                </p>
-                <p className="text-gray-800">{agent.description}</p>
+                <p className="text-base font-semibold text-gray-900">About this Agent</p>
+                <p className="text-gray-800">{agent.description ?? "No description yet."}</p>
               </div>
             )}
 
@@ -563,7 +1095,7 @@ function AgentModal({
             <button
               type="button"
               onClick={onUseAgent}
-              className="rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-black/90"
+              className="rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-black/90"
             >
               Use this agent
             </button>

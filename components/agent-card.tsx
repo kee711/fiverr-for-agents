@@ -15,7 +15,6 @@ type AgentCardProps = {
 
 export function AgentCard({
   agent,
-  compact,
   highlight,
   active,
   rank,
@@ -23,6 +22,11 @@ export function AgentCard({
   onOpen,
   note,
 }: AgentCardProps) {
+  const ratingValue = agent.rating_avg ?? agent.rating ?? 0;
+  const priceValue = agent.price ?? 0;
+  const scoreValue = agent.score ?? agent.fitness_score ?? agent.similarity ?? 0;
+  const normalizedScore =
+    agent.fitness_score != null ? agent.fitness_score * 10 : scoreValue;
   const handleClick = () => {
     if (onOpen) onOpen();
     if (onSelect) onSelect();
@@ -32,22 +36,21 @@ export function AgentCard({
     <div
       onClick={handleClick}
       className={cn(
-        "flex cursor-pointer flex-col gap-3 rounded-2xl border border-gray-200 bg-gray-100 p-4 text-left shadow-sm transition hover:-translate-y-[1px] hover:shadow-md",
-        highlight && "bg-gray-200",
-        active && "ring-2 ring-[#4B6BFF]",
-        compact ? "w-full" : "w-full",
+        "flex cursor-pointer flex-col gap-2 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-sm transition hover:-translate-y-[1px] hover:shadow-md",
+        highlight && "bg-gray-50",
+        active && "bg-gray-200",
       )}
     >
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-          {rank ? `#${rank}` : "Top pick"}
+          {rank ? `#${rank}` : agent.rank ? `#${agent.rank}` : "Top pick"}
           <span className="rounded-full bg-white px-2 py-1 text-[11px] text-gray-500">
-            Verified run score {agent.score.toFixed(1)}
+            Verified run score {normalizedScore.toFixed(1)}
           </span>
         </div>
-        {onSelect || onOpen ? (
+        {/* {onSelect || onOpen ? (
           <span className="text-[11px] text-[#4B6BFF]">choose</span>
-        ) : null}
+        ) : null} */}
       </div>
 
       <div className="flex flex-col gap-3">
@@ -60,18 +63,18 @@ export function AgentCard({
             <UserRound className="h-4 w-4" />
             <span className="text-xs">By {agent.author}</span>
           </div>
-          <p className="text-gray-700">{agent.description}</p>
+          <p className="text-gray-700">{agent.description ?? "No description yet."}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-4 text-sm font-medium text-gray-800">
         <div className="flex items-center gap-1">
           <Wallet className="h-4 w-4" />
-          <span>{agent.price.toFixed(3)}</span>
+          <span>{priceValue.toFixed(3)}</span>
         </div>
         <div className="flex items-center gap-1">
           <Star className="h-4 w-4 text-amber-500" />
-          <span>{agent.rating.toFixed(1)}</span>
+          <span>{ratingValue.toFixed(1)}</span>
         </div>
       </div>
 
