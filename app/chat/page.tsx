@@ -6,11 +6,8 @@ import { AgentCard } from "@/components/agent-card";
 import { Button } from "@/components/ui/button";
 import { useHeaderVisibility } from "@/components/app-frame";
 import { cn } from "@/lib/utils";
-import { agents, categories, type Agent, type Category } from "@/lib/agents";
-import { Send, Sparkles, Star, UserRound, Wallet } from "lucide-react";
-import { useSignOut } from "@coinbase/cdp-hooks";
-import GlobalHeader from "@/components/GlobalHeader";
 import { categories, type Agent } from "@/lib/agents";
+import { createClient } from "@/lib/supabase/client"; // ✅ 추가
 import {
   Bot,
   Feather,
@@ -26,6 +23,7 @@ import {
   UserRound,
   Wallet,
   X,
+  Search,
 } from "lucide-react";
 
 type TextMessage = {
@@ -70,25 +68,63 @@ export default function ChatPage() {
   const [lastQuery, setLastQuery] = useState("");
   const [agentExecuted, setAgentExecuted] = useState(false);
 
-  const recommendedAgents = useMemo(() => {
-    const filtered = searchResults.filter((agent) =>
-      selectedCategory ? agent.category === selectedCategory : true,
-    );
-    const scoredAgents = filtered.length ? filtered : searchResults;
+  // ✅ 전체 에이전트 (AgentsPage처럼 Supabase에서 로드)
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
 
-    const sorted = [...scoredAgents].sort((a, b) => {
-      const aScore = a.fitness_score ?? a.score ?? a.similarity ?? 0;
-      const bScore = b.fitness_score ?? b.score ?? b.similarity ?? 0;
-      if (bScore === aScore) {
-        const aPrice = a.price ?? 0;
-        const bPrice = b.price ?? 0;
-        return aPrice - bPrice;
+  // ✅ 최초 진입 시 Supabase에서 모든 에이전트 로드
+  useEffect(() => {
+    const loadAgents = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("agents")
+          .select(
+            "id, name, author, description, category, price, rating_avg, rating_count, test_score, pricing_model, url"
+          );
+
+        if (error) throw new Error(error.message);
+
+        const sorted =
+          data?.sort((a, b) => {
+            const aRating = (a.rating_avg ?? 0) + (a.rating_count ?? 0) * 0.001;
+            const bRating = (b.rating_avg ?? 0) + (b.rating_count ?? 0) * 0.001;
+            if (bRating === aRating) {
+              return (a.price ?? 0) - (b.price ?? 0);
+            }
+            return bRating - aRating;
+          }) ?? [];
+
+        setAllAgents(
+          sorted.map((agent, index) => ({
+            ...agent,
+            rank: index + 1,
+            rating: agent.rating_avg ?? undefined,
+          }))
+        );
+      } catch (err) {
+        console.error("Failed to load agents for chat:", err);
       }
-      return bScore - aScore;
-    });
+    };
 
-    return sorted.map((agent, index) => ({ ...agent, rank: agent.rank ?? index + 1 }));
-  }, [searchResults, selectedCategory]);
+    void loadAgents();
+  }, []);
+
+  // ✅ 검색 결과가 있으면 searchResults, 없으면 allAgents를 기준으로
+  //    현재 카테고리에 맞는 에이전트만 추천 리스트로 사용
+  const recommendedAgents = useMemo(() => {
+    const baseList = searchResults.length > 0 ? searchResults : allAgents;
+
+    const filtered = baseList.filter(
+      (agent) => agent.category === selectedCategory
+    );
+
+    if (!filtered.length) return [];
+
+    return filtered.map((agent, index) => ({
+      ...agent,
+      rank: agent.rank ?? index + 1,
+    }));
+  }, [searchResults, allAgents, selectedCategory]);
 
   useEffect(() => {
     if (view === "chat" && !selectedAgentId && recommendedAgents[0]) {
@@ -99,13 +135,15 @@ export default function ChatPage() {
 
   const updateExecutionMessage = (
     executionId: string,
-    updater: (exec: ExecutionMessage["execution"]) => ExecutionMessage["execution"],
+    updater: (
+      exec: ExecutionMessage["execution"]
+    ) => ExecutionMessage["execution"]
   ) => {
     setMessages((prev) =>
       prev.map((msg) => {
         if (msg.kind !== "execution" || msg.id !== executionId) return msg;
         return { ...msg, execution: updater(msg.execution) };
-      }),
+      })
     );
   };
 
@@ -114,7 +152,9 @@ export default function ChatPage() {
     setAgentExecuted(false);
   };
 
-  const primaryAgent = recommendedAgents.find((agent) => agent.id === selectedAgentId);
+  const primaryAgent = recommendedAgents.find(
+    (agent) => agent.id === selectedAgentId
+  );
 
   useEffect(() => {
     setShowHeader(view === "landing");
@@ -182,7 +222,12 @@ export default function ChatPage() {
         setSearchResults([]);
         setMessages((prev) => [
           ...prev,
-          { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: aiMessage },
+          {
+            id: `chat-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text: aiMessage,
+          },
         ]);
         return;
       }
@@ -195,7 +240,9 @@ export default function ChatPage() {
         rank?: number;
       };
 
-      const rawResults: RawAgent[] = Array.isArray(payload?.results) ? payload.results : [];
+      const rawResults: RawAgent[] = Array.isArray(payload?.results)
+        ? payload.results
+        : [];
       const results: Agent[] = rawResults.map((item) => ({
         id: item.id,
         name: item.name,
@@ -217,24 +264,40 @@ export default function ChatPage() {
 
       setSearchResults(results);
 
-      if (results[0]) {
-        handleSelectAgent(results[0]);
+      if (results.length) {
+        const firstForCategory =
+          results.find((agent) => agent.category === selectedCategory) ??
+          results[0];
+
+        handleSelectAgent(firstForCategory);
+
         if (payload?.message) {
           setMessages((prev) => [
             ...prev,
-            { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: payload.message },
+            {
+              id: `chat-${Date.now()}`,
+              kind: "text",
+              from: "ai",
+              text: payload.message,
+            },
           ]);
         }
       } else if (payload?.message) {
         setMessages((prev) => [
           ...prev,
-          { id: `chat-${Date.now()}`, kind: "text", from: "ai", text: payload.message },
+          {
+            id: `chat-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text: payload.message,
+          },
         ]);
       }
     } catch (error) {
       console.error(error);
       setSearchResults([]);
-      const message = error instanceof Error ? error.message : "Failed to search";
+      const message =
+        error instanceof Error ? error.message : "Failed to search";
       setSearchError(message);
     } finally {
       setSearching(false);
@@ -261,7 +324,9 @@ export default function ChatPage() {
       const success = response.ok && payload?.ok;
       const text = success
         ? payload?.result?.output ??
-          `Executing agent "${payload?.agent?.name ?? selectedAgentId}" with your latest request.`
+          `Executing agent "${
+            payload?.agent?.name ?? selectedAgentId
+          }" with your latest request.`
         : `Failed to execute agent: ${payload?.error ?? "unknown error"}`;
 
       if (success) {
@@ -275,7 +340,9 @@ export default function ChatPage() {
             result: payload?.result?.output ?? "Execution completed.",
             summary:
               payload?.result?.summary ??
-              `Execution triggered for ${payload?.agent?.name ?? selectedAgentId}.`,
+              `Execution triggered for ${
+                payload?.agent?.name ?? selectedAgentId
+              }.`,
             reviewSubmitted: false,
             rating: 5,
             reviewText: "",
@@ -303,7 +370,9 @@ export default function ChatPage() {
           id: `exec-${Date.now()}`,
           kind: "text",
           from: "ai",
-          text: `Failed to execute agent: ${error instanceof Error ? error.message : "unknown error"}`,
+          text: `Failed to execute agent: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
         },
       ]);
     } finally {
@@ -319,7 +388,7 @@ export default function ChatPage() {
     }));
     try {
       const current = messages.find(
-        (msg) => msg.kind === "execution" && msg.id === executionId,
+        (msg) => msg.kind === "execution" && msg.id === executionId
       ) as ExecutionMessage | undefined;
 
       if (!current) {
@@ -347,11 +416,14 @@ export default function ChatPage() {
         ...exec,
         reviewSubmitted: true,
         submitting: false,
-        reviewMessage: "Thanks for your feedback! Your rating has been recorded.",
+        reviewMessage:
+          "Thanks for your feedback! Your rating has been recorded.",
       }));
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to submit review. Please try again.";
+        error instanceof Error
+          ? error.message
+          : "Failed to submit review. Please try again.";
       updateExecutionMessage(executionId, (exec) => ({
         ...exec,
         submitting: false,
@@ -393,7 +465,10 @@ export default function ChatPage() {
               updateExecutionMessage(id, (exec) => ({ ...exec, rating: value }))
             }
             onReviewChangeExecution={(id, value) =>
-              updateExecutionMessage(id, (exec) => ({ ...exec, reviewText: value.slice(0, 500) }))
+              updateExecutionMessage(id, (exec) => ({
+                ...exec,
+                reviewText: value.slice(0, 500),
+              }))
             }
             onSubmitReview={submitReview}
           />
@@ -432,18 +507,61 @@ function LandingView({
   recommendedAgents: Agent[];
   onOpenAgent: (agent: Agent) => void;
 }) {
-  const categoriesUI: { id: string; label: string; icon: React.ReactNode; tint: string }[] = [
-    { id: "scraper", label: "Scraper", icon: <Bot className="h-5 w-5" />, tint: "bg-gray-100 text-gray-600" },
-    { id: "cartoonist", label: "Cartoonist", icon: <Palette className="h-5 w-5" />, tint: "bg-orange-100 text-orange-500" },
-    { id: "slides", label: "Slides", icon: <Presentation className="h-5 w-5" />, tint: "bg-amber-100 text-amber-500" },
-    { id: "sheets", label: "Sheets", icon: <Grid className="h-5 w-5" />, tint: "bg-green-100 text-green-500" },
-    { id: "docs", label: "Docs", icon: <PenSquare className="h-5 w-5" />, tint: "bg-blue-100 text-blue-500" },
-    { id: "logo", label: "Logo", icon: <Feather className="h-5 w-5" />, tint: "bg-purple-100 text-purple-500" },
+  const categoriesUI: {
+    id: string;
+    label: string;
+    icon: React.ReactNode;
+    tint: string;
+  }[] = [
+    {
+      id: "scraper",
+      label: "Scraper",
+      icon: <Bot className="h-5 w-5" />,
+      tint: "bg-gray-100 text-gray-600",
+    },
+    {
+      id: "research",
+      label: "Research",
+      icon: <Search className="h-4 w-4" />,
+      tint: "bg-indigo-100 text-indigo-500",
+    },
+    {
+      id: "cartoonist",
+      label: "Cartoonist",
+      icon: <Palette className="h-5 w-5" />,
+      tint: "bg-orange-100 text-orange-500",
+    },
+    {
+      id: "slides",
+      label: "Slides",
+      icon: <Presentation className="h-5 w-5" />,
+      tint: "bg-amber-100 text-amber-500",
+    },
+    {
+      id: "sheets",
+      label: "Sheets",
+      icon: <Grid className="h-5 w-5" />,
+      tint: "bg-green-100 text-green-500",
+    },
+    {
+      id: "docs",
+      label: "Docs",
+      icon: <PenSquare className="h-5 w-5" />,
+      tint: "bg-blue-100 text-blue-500",
+    },
+    {
+      id: "logo",
+      label: "Logo",
+      icon: <Feather className="h-5 w-5" />,
+      tint: "bg-purple-100 text-purple-500",
+    },
   ];
 
   return (
     <section className="flex flex-col items-center gap-12 pt-32">
-      <h1 className="text-3xl font-semibold tracking-tight text-gray-900">어떤 도움이 필요하신가요?</h1>
+      <h1 className="text-3xl font-semibold tracking-tight text-gray-900">
+        어떤 도움이 필요하신가요?
+      </h1>
 
       <div className="flex w-[70%] flex-col items-center gap-6">
         <PromptComposer
@@ -479,7 +597,10 @@ function LandingView({
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-500">Run a search to see agent results here.</p>
+          <p className="text-sm text-gray-500">
+            해당 카테고리에 맞는 에이전트를 불러오는 중이거나, 아직 등록된
+            에이전트가 없어요.
+          </p>
         )}
       </div>
     </section>
@@ -527,13 +648,13 @@ function ChatView({
     <section
       className={cn(
         "relative flex h-full w-full items-stretch gap-6 overflow-hidden transition-all duration-300",
-        hasRecommended ? "pr-4" : "justify-center",
+        hasRecommended ? "pr-4" : "justify-center"
       )}
     >
       <div
         className={cn(
           "flex h-full flex-col gap-4 overflow-hidden transition-all duration-300",
-          hasRecommended ? "flex-[2]" : "w-full max-w-4xl",
+          hasRecommended ? "flex-[2]" : "w-full max-w-4xl"
         )}
       >
         <header className="flex items-center justify-between">
@@ -543,9 +664,6 @@ function ChatView({
             </p>
             <h2 className="text-2xl font-semibold">Request PPT</h2>
           </div>
-          {/* <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
-            AI compares verified runs, then ranks for you
-          </span> */}
         </header>
 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto pr-2 pb-28">
@@ -565,7 +683,9 @@ function ChatView({
                   key={message.id}
                   className="space-y-3 rounded-2xl bg-gray-100 p-4 shadow-sm"
                 >
-                  <p className="text-sm font-semibold text-gray-800">Execution Result</p>
+                  <p className="text-sm font-semibold text-gray-800">
+                    Execution Result
+                  </p>
                   <p className="text-sm text-gray-800">{exec.summary}</p>
                   <div className="rounded-xl bg-white p-3 text-sm text-gray-800 ring-1 ring-gray-200">
                     {exec.result}
@@ -575,7 +695,9 @@ function ChatView({
                       rating={exec.rating}
                       onRate={(value) => onRateExecution(message.id, value)}
                       review={exec.reviewText}
-                      onReviewChange={(value) => onReviewChangeExecution(message.id, value)}
+                      onReviewChange={(value) =>
+                        onReviewChangeExecution(message.id, value)
+                      }
                       onSubmit={() => onSubmitReview(message.id)}
                       submitting={exec.submitting}
                       message={exec.reviewMessage}
@@ -615,7 +737,7 @@ function ChatView({
                     "Execution completed"
                   ) : (
                     "Confirm"
-                  )}c
+                  )}
                 </Button>
               </div>
             </div>
@@ -639,7 +761,7 @@ function ChatView({
           "flex max-h-full flex-col overflow-hidden rounded-3xl bg-gray-50 p-5 shadow-sm transition-all duration-300",
           hasRecommended
             ? "flex-[1] translate-x-0 opacity-100"
-            : "pointer-events-none w-0 -translate-x-6 opacity-0",
+            : "pointer-events-none w-0 -translate-x-6 opacity-0"
         )}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -711,7 +833,7 @@ function ReviewBox({
               "flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition",
               star <= rating
                 ? "border-amber-400 bg-amber-100 text-amber-700"
-                : "border-gray-300 bg-gray-50 text-gray-500",
+                : "border-gray-300 bg-gray-50 text-gray-500"
             )}
           >
             {star}
@@ -773,12 +895,10 @@ function PromptComposer({
     <div
       className={cn(
         "flex w-full flex-col rounded-[32px] border border-gray-200 bg-white shadow-sm transition",
-        landing ? "px-3 py-3" : "px-5 py-4",
+        landing ? "px-3 py-3" : "px-5 py-4"
       )}
     >
-      <div
-        className="flex w-full flex-col gap-3"
-      >
+      <div className="flex w-full flex-col gap-3">
         <textarea
           ref={textareaRef}
           value={prompt}
@@ -792,7 +912,7 @@ function PromptComposer({
           placeholder={placeholder}
           className={cn(
             "w-full p-3 resize-none bg-transparent text-base text-gray-900 outline-none placeholder:text-gray-400",
-            landing ? "min-h-[32px] leading-relaxed" : "",
+            landing ? "min-h-[32px] leading-relaxed" : ""
           )}
           style={{ height: `${textHeight}px` }}
         />
@@ -851,7 +971,7 @@ function CategoryScroller({
             onClick={() => onCategoryChange(category.id)}
             className={cn(
               "flex min-w-[120px] flex-col items-center gap-2 rounded-xl px-3 py-3 text-sm font-semibold transition",
-              "text-gray-600 hover:-translate-y-[2px]",
+              "text-gray-600 hover:-translate-y-[2px]"
             )}
           >
             <span
@@ -859,7 +979,7 @@ function CategoryScroller({
                 "flex h-12 w-12 items-center justify-center rounded-full text-base",
                 isSelected
                   ? "bg-gray-50 shadow-lg"
-                  : category.tint ?? "bg-gray-100 text-gray-600",
+                  : category.tint ?? "bg-gray-100 text-gray-600"
               )}
             >
               {category.icon}
@@ -867,7 +987,7 @@ function CategoryScroller({
             <span
               className={cn(
                 "text-xs font-semibold leading-tight text-center",
-                isSelected ? "text-gray-900" : "text-gray-600",
+                isSelected ? "text-gray-900" : "text-gray-600"
               )}
             >
               {category.label}
@@ -930,7 +1050,7 @@ function AgentModal({
           onClick={onClose}
           className="absolute right-4 top-4 rounded-full px-2 py-2 text-xs font-semibold text-gray-600"
         >
-          <X className="h-4 w-4"/>
+          <X className="h-4 w-4" />
         </button>
 
         <div className="flex flex-col gap-4">
@@ -950,11 +1070,9 @@ function AgentModal({
                   <UserRound className="h-4 w-4" />
                   <span>{agent.author}</span>
                 </div>
+              </div>
             </div>
-            </div>
-            <div className="flex items-center gap-3 text-sm font-semibold text-gray-800">
-              
-            </div>
+            <div className="flex items-center gap-3 text-sm font-semibold text-gray-800"></div>
           </div>
 
           <div className="flex gap-1">
@@ -967,7 +1085,7 @@ function AgentModal({
                   "rounded-full px-3 py-1 text-sm font-semibold transition",
                   tab === key
                     ? "bg-gray-200 text-gray-900 sha"
-                    : "text-gray-600 hover:bg-gray-100",
+                    : "text-gray-600 hover:bg-gray-100"
                 )}
               >
                 {key === "about"
@@ -982,8 +1100,12 @@ function AgentModal({
           <div className="rounded-2xl bg-gray-100 p-5">
             {tab === "about" && (
               <div className="space-y-2">
-                <p className="text-base font-semibold text-gray-900">About this Agent</p>
-                <p className="text-gray-800">{agent.description ?? "No description yet."}</p>
+                <p className="text-base font-semibold text-gray-900">
+                  About this Agent
+                </p>
+                <p className="text-gray-800">
+                  {agent.description ?? "No description yet."}
+                </p>
               </div>
             )}
 

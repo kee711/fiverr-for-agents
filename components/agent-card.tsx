@@ -24,7 +24,8 @@ export function AgentCard({
 }: AgentCardProps) {
   const ratingValue = agent.rating_avg ?? agent.rating ?? 0;
   const priceValue = agent.price ?? 0;
-  const scoreValue = agent.score ?? agent.fitness_score ?? agent.similarity ?? 0;
+  const scoreValue =
+    agent.score ?? agent.fitness_score ?? agent.similarity ?? 0;
   const normalizedScore =
     agent.fitness_score != null ? agent.fitness_score * 10 : scoreValue;
   const handleClick = () => {
@@ -38,7 +39,7 @@ export function AgentCard({
       className={cn(
         "flex cursor-pointer flex-col gap-2 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-sm transition hover:-translate-y-[1px] hover:shadow-md",
         highlight && "bg-gray-50",
-        active && "bg-gray-200",
+        active && "bg-gray-200"
       )}
     >
       <div className="flex items-start justify-between">
@@ -54,16 +55,16 @@ export function AgentCard({
       </div>
 
       <div className="flex flex-col gap-3">
-        <div className="flex h-32 items-center justify-center rounded-lg bg-gray-300">
+        {/* <div className="flex h-32 items-center justify-center rounded-lg bg-gray-300">
           <ImageIcon className="h-8 w-8 text-gray-600" />
-        </div>
+        </div> */}
         <div className="space-y-1 text-sm">
           <p className="text-base font-semibold">{agent.name}</p>
           <div className="flex items-center gap-2 text-gray-600">
             <UserRound className="h-4 w-4" />
             <span className="text-xs">By {agent.author}</span>
           </div>
-          <p className="text-gray-700">{agent.description ?? "No description yet."}</p>
+          {/* <p className="text-gray-700">{agent.description ?? "No description yet."}</p> */}
         </div>
       </div>
 

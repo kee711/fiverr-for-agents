@@ -6,11 +6,26 @@ import { Input } from "@/components/ui/input";
 import { categories } from "@/lib/agents";
 import { CheckCircle2, Loader2, Play, Sparkles } from "lucide-react";
 
+type JudgeEval = {
+  query: string;
+  task_inferred: string;
+  dimensions: {
+    name: string;
+    score: number; // 0~10
+    comment: string;
+  }[];
+  overall_score: number; // 0~10
+  overall_comment: string;
+  issues: string[];
+};
+
 type TestResult = {
-  id: string;
-  testedAt: string;
-  score: number;
-  notes: string;
+  type: "json";
+  total_score: number; // 최종 통합 점수 (0~10)
+  basic_score: number; // 베이직 룰 점수 (0~10)
+  judge_score: number; // Judge 평균 점수 (0~10)
+  overall_comment: string;
+  judge_evals: JudgeEval[];
 };
 
 export default function RegisterPage() {
@@ -24,6 +39,7 @@ export default function RegisterPage() {
     price: "",
     category: categories[0]?.id ?? "ppt",
   });
+
   const [testStatus, setTestStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
@@ -41,26 +57,36 @@ export default function RegisterPage() {
     setTestStatus("loading");
     setRegisterStatus("idle");
     setMessage(null);
+    setTestResult(null);
+
     try {
       const res = await fetch("/api/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // 필요하면 일부 필드만 보내도 됨 (예: name, category, description, url)
         body: JSON.stringify(form),
       });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Test failed");
+      }
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Test failed");
-      setTestResult(data.result);
+      // 백엔드에서 { testResult: ... } 형태라고 가정
+      setTestResult(data.testResult as TestResult);
       setTestStatus("success");
       setMessage("Test completed. Review result and finish registration.");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setTestStatus("error");
-      setMessage("Test failed. Please adjust and retry.");
+      setMessage(err.message ?? "Test failed. Please adjust and retry.");
     }
   };
 
   const handleRegister = async () => {
-    if (testStatus !== "success") return;
+    if (testStatus !== "success" || !testResult) return;
+
     setRegisterStatus("loading");
     setMessage(null);
     try {
@@ -69,15 +95,17 @@ export default function RegisterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form, testResult }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Register failed");
+
       setRegisterStatus("success");
       setMessage("Agent registered successfully.");
       window.location.href = "/agents";
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setRegisterStatus("error");
-      setMessage("Registration failed. Please retry.");
+      setMessage(err.message ?? "Registration failed. Please retry.");
     }
   };
 
@@ -115,6 +143,7 @@ export default function RegisterPage() {
             <p className="text-xl font-semibold">Registration</p>
             <p className="text-sm font-semibold text-gray-700">Basic</p>
           </div>
+
           <div className="grid gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
@@ -218,6 +247,7 @@ export default function RegisterPage() {
             </div>
           </div>
 
+          {/* 🔥 Validation + Test 결과 통합 카드 */}
           <div className="flex flex-col gap-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold text-gray-800">
@@ -258,21 +288,109 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            <div className="rounded-xl bg-gray-50 p-4 text-sm text-gray-800">
+            <div className="rounded-xl bg-gray-50 p-4 text-sm text-gray-800 space-y-4">
               {testStatus === "success" && testResult ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-green-700">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Test passed at{" "}
-                    {new Date(testResult.testedAt).toLocaleTimeString()}
+                <>
+                  {/* 상단 요약 점수 카드 */}
+                  <div className="border rounded p-4 bg-white space-y-2 text-sm">
+                    <div className="font-semibold mb-1">Scores</div>
+                    <div className="flex flex-col gap-1">
+                      <div>
+                        <span className="font-medium">Total score: </span>
+                        {testResult.total_score.toFixed(1)} / 10
+                      </div>
+                      <div>
+                        <span className="font-medium">Basic rule score: </span>
+                        {testResult.basic_score.toFixed(1)} / 10
+                      </div>
+                      <div>
+                        <span className="font-medium">Judge score: </span>
+                        {testResult.judge_score.toFixed(1)} / 10
+                      </div>
+                    </div>
                   </div>
-                  <p>Score: {testResult.score.toFixed(1)}</p>
-                  <p>{testResult.notes}</p>
-                </div>
+
+                  {/* Judge 한 줄 코멘트 */}
+                  <div className="border rounded p-3 bg-white text-sm">
+                    <div className="font-semibold mb-1">Judge Comment</div>
+                    <div>{testResult.overall_comment}</div>
+                  </div>
+
+                  {/* Judge Eval 상세 (per query) */}
+                  {testResult.judge_evals.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="text-sm font-semibold mb-1">
+                        Judge Evals (per query)
+                      </div>
+                      {testResult.judge_evals.map((ev) => (
+                        <div
+                          key={ev.query}
+                          className="border rounded p-3 text-xs space-y-2 bg-white"
+                        >
+                          <div className="flex justify-between items-center">
+                            <div className="font-semibold">
+                              Query:{" "}
+                              <span className="font-normal break-all">
+                                {ev.query}
+                              </span>
+                            </div>
+                            <div>
+                              Score:{" "}
+                              <span className="font-semibold">
+                                {ev.overall_score.toFixed(1)} / 10
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="text-gray-600">
+                            {ev.overall_comment}
+                          </div>
+
+                          {/* Dimensions */}
+                          {ev.dimensions.length > 0 && (
+                            <div>
+                              <div className="font-semibold mt-1 mb-1">
+                                Dimensions
+                              </div>
+                              <ul className="list-disc list-inside space-y-1">
+                                {ev.dimensions.map((d) => (
+                                  <li key={d.name}>
+                                    <span className="font-medium">
+                                      {d.name}
+                                    </span>
+                                    : {d.score.toFixed(1)} / 10 - {d.comment}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Issues */}
+                          {ev.issues.length > 0 && (
+                            <div>
+                              <div className="font-semibold mt-1 mb-1">
+                                Issues
+                              </div>
+                              <ul className="list-disc list-inside space-y-1 text-red-600">
+                                {ev.issues.map((issue, i) => (
+                                  <li key={i}>{issue}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               ) : (
-                <p className="text-gray-600">
-                  Click Start Test to validate the agent automatically.
-                </p>
+                <div className="flex items-center gap-2 text-gray-600">
+                  <CheckCircle2 className="h-4 w-4 text-gray-400" />
+                  <span>
+                    Click &quot;Start Test&quot; to validate the agent
+                    automatically.
+                  </span>
+                </div>
               )}
             </div>
 

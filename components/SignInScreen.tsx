@@ -21,7 +21,7 @@ export default function SignInScreen() {
             <div className="modern-auth-button">
               <SignInModal>
                 <Button
-                  className="rounded-full bg-[#4B6BFF] px-5 py-2 text-white shadow-md hover:bg-[#3d5ff5]"
+                  className="rounded-full bg-[#2c44fc] px-5 py-2 text-white shadow-md hover:bg-[#011082]"
                   size="lg"
                   variant="secondary"
                 >

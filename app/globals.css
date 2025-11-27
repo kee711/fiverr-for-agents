@@ -66,3 +66,33 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* 공통: 모든 스크롤바에 적용 */
+* {
+  /* Firefox용 */
+  scrollbar-width: thin;
+  scrollbar-color: #9ca3af #ffffff; /* thumb 색, track 색 */
+}
+
+/* WebKit 계열 (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 8px; /* 세로 스크롤바 두께 */
+  height: 8px; /* 가로 스크롤바 두께 */
+}
+
+/* 트랙(배경) */
+::-webkit-scrollbar-track {
+  background: #ffffff; /* 흰색 */
+}
+
+/* 스크롤 핸들(thumb) */
+::-webkit-scrollbar-thumb {
+  background-color: #d1d5db; /* tailwind gray-300 */
+  border-radius: 9999px; /* 둥글게 */
+  border: 2px solid #ffffff; /* 양쪽에 흰색 여백 느낌 */
+}
+
+/* hover 시 조금 더 진한 회색 */
+::-webkit-scrollbar-thumb:hover {
+  background-color: #9ca3af; /* tailwind gray-400 */
+}
