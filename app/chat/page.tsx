@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useHeaderVisibility } from "@/components/app-frame";
 import { cn } from "@/lib/utils";
 import { categories, type Agent } from "@/lib/agents";
-import { createClient } from "@/lib/supabase/client"; // ✅ 추가
+import { createClient } from "@/lib/supabase/client";
 import {
   Bot,
   Feather,
@@ -51,7 +51,7 @@ type ExecutionMessage = {
 
 type ChatMessage = TextMessage | ExecutionMessage;
 
-export default function ChatPage() {
+export default function ChatPage({ user }: { user: any }) {
   const { setShowHeader } = useHeaderVisibility();
   const [view, setView] = useState<"landing" | "chat">("landing");
   const [prompt, setPrompt] = useState("");
@@ -471,6 +471,7 @@ export default function ChatPage() {
               }))
             }
             onSubmitReview={submitReview}
+            user={user}
           />
         )}
       </div>
@@ -624,6 +625,7 @@ function ChatView({
   onRateExecution,
   onReviewChangeExecution,
   onSubmitReview,
+  user,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
@@ -641,6 +643,7 @@ function ChatView({
   onRateExecution: (executionId: string, value: number) => void;
   onReviewChangeExecution: (executionId: string, value: string) => void;
   onSubmitReview: (executionId: string) => void;
+  user: any;
 }) {
   const hasRecommended = recommendedAgents.length > 0;
 
@@ -660,9 +663,11 @@ function ChatView({
         <header className="flex items-center justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.12em] text-gray-500">
-              {selectedCategory} request
+              {user.name ?? "Guest"}
             </p>
-            <h2 className="text-2xl font-semibold">Request PPT</h2>
+            <h2 className="text-2xl font-semibold">
+              {user.name ?? "Guest"} chat
+            </h2>
           </div>
         </header>
 
