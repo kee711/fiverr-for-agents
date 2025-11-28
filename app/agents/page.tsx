@@ -33,7 +33,7 @@ export default function AgentsPage() {
       id: "scraper",
       label: "Scraper",
       icon: <Bot className="h-4 w-4" />,
-      tint: "bg-gray-100 text-gray-600",
+      tint: "bg-cyan-100 text-cyan-600",
     },
     {
       id: "research",

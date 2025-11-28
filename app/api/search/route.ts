@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const DEFAULT_TOP_K = 10;
 const DEFAULT_MATCH_THRESHOLD = 0.35;
-const DEFAULT_PRICE_ANCHOR = 200;
+const DEFAULT_PRICE_ANCHOR = 100;
 const MAX_TOP_K = 50;
 
 type MatchRow = {
@@ -58,7 +58,7 @@ function calcFitnessScore(params: {
     0.025 * rating +
     0.025 * ratingPop +
     0.1 * test -
-    0.05 * pricePenalty;
+    0.15 * pricePenalty;
 
   return Math.max(raw, 0);
 }
@@ -97,6 +97,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     console.log("[search] raw body", body);
     const query = (body?.query ?? "").toString().trim();
+    const category = body?.category ? String(body.category) : null;
     if (!query) {
       return NextResponse.json(
         { ok: false, error: "query is required" },
@@ -110,7 +111,10 @@ export async function POST(request: Request) {
       0,
       1
     );
-    const priceMax = body?.priceMax != null ? toNumber(body.priceMax, DEFAULT_PRICE_ANCHOR) : null;
+    const priceMax =
+      body?.priceMax != null
+        ? toNumber(body.priceMax, DEFAULT_PRICE_ANCHOR)
+        : null;
     const priceAnchor = priceMax ?? DEFAULT_PRICE_ANCHOR;
     console.log("[search] parsed params", {
       query,
@@ -149,8 +153,18 @@ export async function POST(request: Request) {
             parameters: {
               type: "object",
               properties: {
-                topK: { type: "integer", minimum: 1, maximum: MAX_TOP_K, default: topK },
-                matchThreshold: { type: "number", minimum: 0, maximum: 1, default: matchThreshold },
+                topK: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: MAX_TOP_K,
+                  default: topK,
+                },
+                matchThreshold: {
+                  type: "number",
+                  minimum: 0,
+                  maximum: 1,
+                  default: matchThreshold,
+                },
                 priceMax: { type: "number", nullable: true },
               },
             },
@@ -223,11 +237,14 @@ export async function POST(request: Request) {
       rawToolArgs: toolArgs,
     });
 
-    const { data: matches, error: matchError } = await supabase.rpc("match_agents", {
-      query_embedding: queryEmbedding,
-      match_threshold: rpcMatchThreshold,
-      match_count: rpcTopK,
-    });
+    const { data: matches, error: matchError } = await supabase.rpc(
+      "match_agents",
+      {
+        query_embedding: queryEmbedding,
+        match_threshold: rpcMatchThreshold,
+        match_count: rpcTopK,
+      }
+    );
     console.log("[search] match_agents response", {
       matchError,
       matchCount: matches?.length,
@@ -247,13 +264,20 @@ export async function POST(request: Request) {
 
     // Fallback: if no vector matches, relax threshold to 0 to still surface closest agents.
     if (!matchedIds.length) {
-      console.log("[search] no matches at threshold; retrying with threshold 0");
-      const { data: relaxedData, error: relaxedError } = await supabase.rpc("match_agents", {
-        query_embedding: queryEmbedding,
-        match_threshold: 0,
-        match_count: rpcTopK,
-      });
-      const relaxedMatches: MatchRow[] = Array.isArray(relaxedData) ? relaxedData : [];
+      console.log(
+        "[search] no matches at threshold; retrying with threshold 0"
+      );
+      const { data: relaxedData, error: relaxedError } = await supabase.rpc(
+        "match_agents",
+        {
+          query_embedding: queryEmbedding,
+          match_threshold: 0,
+          match_count: rpcTopK,
+        }
+      );
+      const relaxedMatches: MatchRow[] = Array.isArray(relaxedData)
+        ? relaxedData
+        : [];
       console.log("[search] relaxed match_agents response", {
         relaxedError,
         relaxedCount: relaxedMatches?.length,
@@ -268,19 +292,26 @@ export async function POST(request: Request) {
 
     if (!matchedIds.length) {
       console.log("[search] still no matches; falling back to metadata search");
-      const { data: metaAgents, error: metaError } = await supabase
+      let metaQuery = supabase
         .from("agents")
         .select(
-          "id, name, author, description, category, url, pricing_model, price, rating_avg, rating_count, test_score",
+          "id, name, author, description, category, url, pricing_model, price, rating_avg, rating_count, test_score"
         )
         .or(
           [
             `name.ilike.%${query}%`,
             `description.ilike.%${query}%`,
             `category.ilike.%${query}%`,
-          ].join(","),
-        )
-        .limit(rpcTopK);
+          ].join(",")
+        );
+
+      if (category && category !== "all") {
+        metaQuery = metaQuery.eq("category", category);
+      }
+
+      const { data: metaAgents, error: metaError } = await metaQuery.limit(
+        rpcTopK
+      );
 
       console.log("[search] metadata search", {
         metaError,
@@ -291,7 +322,7 @@ export async function POST(request: Request) {
       if (metaError) {
         return NextResponse.json(
           { ok: false, error: `meta agent fetch failed: ${metaError.message}` },
-          { status: 500 },
+          { status: 500 }
         );
       }
 
@@ -340,6 +371,9 @@ export async function POST(request: Request) {
       .in("id", matchedIds);
     if (rpcPriceMax != null) {
       agentQuery = agentQuery.lte("price", rpcPriceMax);
+    }
+    if (category && category !== "all") {
+      agentQuery = agentQuery.eq("category", category);
     }
 
     const { data: agents, error: agentError } = await agentQuery;
@@ -408,12 +442,12 @@ export async function POST(request: Request) {
           content: `Tell the user why you recommended the following agent based on the numbers in ${explanation}`,
         },
       ],
-  })
+    });
     console.log("[search] explanation built", {
       explanation,
       aiSummary: AIexplanation.choices[0].message.content,
     });
-    
+
     const summaryMessage = `${AIexplanation.choices[0].message.content}`;
 
     return NextResponse.json({
