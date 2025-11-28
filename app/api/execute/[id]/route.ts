@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { createPublicClient, http, parseAbiItem } from "viem";
+import { createPublicClient, http, parseAbiItem, decodeEventLog } from "viem";
 import { baseSepolia } from "viem/chains";
 
 type AgentRow = {
@@ -81,12 +81,14 @@ export async function POST(
     );
   }
 
+  // price 는 USDC 6 decimal 기준
   const priceUnits = BigInt(Math.round(priceNumber * 10 ** 6));
 
   const usdcAddress =
     process.env.BASE_SEPOLIA_USDC_ADDRESS ||
     "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
+  // 🔹 가격이 0이면 그냥 프록시 실행
   if (priceUnits === BigInt(0)) {
     console.log("price = 0 → free execution, skipping payment");
     return proxyToUpstream(req, upstreamUrl);
@@ -103,6 +105,7 @@ export async function POST(
 
   const txHash = req.headers.get("x-tx-hash");
 
+  // 🔹 클라이언트가 아직 txHash 를 안 보냈으면 402로 요구사항 리턴
   if (!txHash) {
     console.log(">>> 402 paymentRequirements:", paymentRequirements);
     return NextResponse.json(paymentRequirements, {
@@ -114,6 +117,7 @@ export async function POST(
     });
   }
 
+  // 🔹 txHash 가 있으면 온체인 결제 검증
   let settlement: PaymentSettlementResult | null = null;
   try {
     settlement = await verifyDirectPaymentOnChain(txHash, paymentRequirements);
@@ -140,8 +144,10 @@ export async function POST(
     );
   }
 
+  // 🔹 결제가 유효하면 upstream 에이전트 호출
   const resp = await proxyToUpstream(req, upstreamUrl);
 
+  // 🔹 결제 settlement 정보를 헤더로 인코딩해서 내려줌
   if (settlement) {
     const headerValue = encodePaymentResponseHeader(settlement);
     resp.headers.set("X-PAYMENT-RESPONSE", headerValue);
@@ -233,13 +239,30 @@ async function verifyDirectPaymentOnChain(
   });
 
   const usdcAddress = accept.asset as `0x${string}`;
+  const expectedValue = BigInt(accept.value);
+  const expectedPayTo = accept.payTo.toLowerCase();
+
+  console.log("=== verifyDirectPaymentOnChain ===");
+  console.log("txHash:", txHash);
+  console.log("expected usdcAddress:", usdcAddress);
+  console.log("expected payTo:", expectedPayTo);
+  console.log("expected value:", expectedValue.toString());
 
   const receipt = await publicClient.getTransactionReceipt({
     hash: txHash as `0x${string}`,
   });
 
-  if (!receipt || receipt.status !== "success") {
-    console.warn("Tx not successful or not found:", txHash);
+  if (!receipt) {
+    console.warn("No receipt for tx:", txHash);
+    return null;
+  }
+
+  console.log("receipt.status:", receipt.status);
+  console.log("receipt.to:", receipt.to);
+  console.log("receipt.logs.length:", receipt.logs.length);
+
+  if (receipt.status !== "success") {
+    console.warn("Tx not successful or reverted:", txHash);
     return null;
   }
 
@@ -247,45 +270,85 @@ async function verifyDirectPaymentOnChain(
     "event Transfer(address indexed from, address indexed to, uint256 value)"
   );
 
-  const logs = await publicClient.getLogs({
-    address: usdcAddress,
-    event: transferEvent,
-    fromBlock: receipt.blockNumber,
-    toBlock: receipt.blockNumber,
-  });
+  const decodedTransfers: {
+    from: string;
+    to: string;
+    value: bigint;
+  }[] = [];
 
-  console.log("Direct payment logs count:", logs.length);
+  // 🔍 이 tx 안의 모든 로그를 직접 스캔하면서, usdcAddress 에서 발생한 Transfer 만 디코드
+  for (const log of receipt.logs) {
+    console.log(
+      "raw log:",
+      "address=",
+      log.address,
+      "topics=",
+      log.topics,
+      "data=",
+      log.data
+    );
 
-  const { payTo, value } = accept;
-  const valueUnits = BigInt(value);
+    if (log.address.toLowerCase() !== usdcAddress.toLowerCase()) continue;
 
-  const matchedLog = logs.find((log) => {
-    const from = (log.args as any).from as string;
-    const to = (log.args as any).to as string;
-    const v = BigInt((log.args as any).value);
+    try {
+      const decoded = decodeEventLog({
+        abi: [transferEvent],
+        data: log.data,
+        topics: log.topics,
+      });
 
-    return to.toLowerCase() === payTo.toLowerCase() && v === valueUnits;
-  });
+      if (decoded.eventName === "Transfer") {
+        const args = decoded.args as any;
+        const from = (args.from as string) ?? "";
+        const to = (args.to as string) ?? "";
+        const v = BigInt(args.value);
 
-  if (!matchedLog) {
-    console.warn("No matching Transfer event in tx:", txHash);
+        decodedTransfers.push({ from, to, value: v });
+
+        console.log(
+          "decoded Transfer:",
+          "from=",
+          from,
+          "to=",
+          to,
+          "value=",
+          v.toString()
+        );
+      }
+    } catch (e) {
+      console.log("failed to decode log for usdcAddress:", e);
+    }
+  }
+
+  if (!decodedTransfers.length) {
+    console.warn(
+      "No Transfer logs for this usdcAddress in tx receipt. Payment not found."
+    );
     return null;
   }
 
-  const from = (matchedLog.args as any).from as string;
-  const to = (matchedLog.args as any).to as string;
+  const matched = decodedTransfers.find(
+    (log) =>
+      log.to.toLowerCase() === expectedPayTo && log.value === expectedValue
+  );
+
+  if (!matched) {
+    console.warn(
+      "Transfer logs exist, but none matched (to + value). Payment invalid."
+    );
+    return null;
+  }
 
   const settlement: PaymentSettlementResult = {
     transaction: txHash,
     network: accept.network,
     asset: usdcAddress,
-    value: value,
-    from,
-    to,
+    value: accept.value,
+    from: matched.from,
+    to: matched.to,
   };
 
   console.log("Direct payment settlement result:", settlement);
-
   return settlement;
 }
 

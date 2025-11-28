@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useHeaderVisibility } from "@/components/app-frame";
 import { cn } from "@/lib/utils";
 import { categories, type Agent } from "@/lib/agents";
-import { createClient } from "@/lib/supabase/client"; // ✅ 추가
+import { createClient } from "@/lib/supabase/client";
 import {
   Bot,
   Feather,
@@ -26,11 +26,25 @@ import {
   Search,
 } from "lucide-react";
 
+// 🔹 결제/온체인 검증을 위한 추가 import
+import { createWalletClient, createPublicClient, http } from "viem";
+import { base, baseSepolia } from "viem/chains";
+import { getCurrentUser, toViemAccount } from "@coinbase/cdp-core";
+import { decodePaymentResponseHeader, type PaymentInfo } from "@/utils/x402";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
+
 type TextMessage = {
   id: string;
   kind: "text";
   from: "user" | "ai";
   text: string;
+};
+
+type ExecutionImage = {
+  type: "base64" | "url";
+  src: string; // base64 문자열 또는 이미지 URL
+  mimeType?: string; // base64일 때 주로 사용 (image/png 등)
+  alt?: string;
 };
 
 type ExecutionMessage = {
@@ -46,12 +60,181 @@ type ExecutionMessage = {
     reviewText: string;
     submitting: boolean;
     reviewMessage: string | null;
+
+    // 🔥 이미지들 (선택)
+    images?: ExecutionImage[];
   };
 };
 
 type ChatMessage = TextMessage | ExecutionMessage;
 
-export default function ChatPage() {
+// 🔹 X-402 Direct Payment 요구사항 타입 (서버와 동일 형태)
+type DirectAcceptOption = {
+  scheme: string;
+  network: string;
+  resource: string;
+  mimeType: string;
+  maxTimeoutSeconds: number;
+  asset: string;
+  payTo: string;
+  value: string;
+  description?: string;
+  extra?: Record<string, any>;
+};
+
+type DirectPaymentRequirements = {
+  x402Version: number;
+  accepts: DirectAcceptOption[];
+};
+
+// 🔹 실행 결과를 JSON이면 파싱, 아니면 문자열 그대로 쓰는 헬퍼
+function parseExecutionResult(
+  rawText: string,
+  fallbackAgentName: string
+): { resultText: string; summaryText: string } {
+  let resultText = rawText;
+  let summaryText = `Execution completed for ${fallbackAgentName}.`;
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    const resultOutput =
+      parsed?.result?.output ??
+      parsed?.output ??
+      parsed?.body ??
+      parsed?.result ??
+      parsed;
+
+    const summary =
+      parsed?.result?.summary ??
+      parsed?.summary ??
+      `Execution triggered for ${fallbackAgentName}.`;
+
+    resultText =
+      typeof resultOutput === "string"
+        ? resultOutput
+        : JSON.stringify(resultOutput, null, 2);
+    summaryText = summary;
+  } catch {
+    // JSON 아님 → 그대로 사용
+  }
+
+  return { resultText, summaryText };
+}
+
+function sanitizeRawResultForLlm(rawText: string): {
+  sanitizedText: string;
+  images: ExecutionImage[];
+} {
+  let images: ExecutionImage[] = [];
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    // 1) 최상위 imageBase64 처리 (네가 예시로 준 구조)
+    if (parsed.imageBase64?.imageBase64) {
+      images.push({
+        type: "base64",
+        src: parsed.imageBase64.imageBase64,
+        mimeType: "image/png",
+        alt: "Generated image",
+      });
+      delete parsed.imageBase64;
+    }
+
+    // 2) results 배열 안에 이미지가 있을 가능성 (옵셔널)
+    if (Array.isArray(parsed.results)) {
+      parsed.results = parsed.results.map((r: any, idx: number) => {
+        const copy = { ...r };
+
+        if (copy.imageBase64?.imageBase64) {
+          images.push({
+            type: "base64",
+            src: copy.imageBase64.imageBase64,
+            mimeType: "image/png",
+            alt: copy.title ?? `Result image #${idx + 1}`,
+          });
+          delete copy.imageBase64;
+        }
+
+        if (copy.imageUrl || copy.image_url) {
+          images.push({
+            type: "url",
+            src: copy.imageUrl ?? copy.image_url,
+            alt: copy.title ?? `Result image #${idx + 1}`,
+          });
+        }
+
+        return copy;
+      });
+    }
+
+    return {
+      sanitizedText: JSON.stringify(parsed, null, 2),
+      images,
+    };
+  } catch {
+    // JSON 아니면 어쩔 수 없이 그냥 rawText 사용
+    return { sanitizedText: rawText, images: [] };
+  }
+}
+
+async function formatWithLlm(
+  rawText: string,
+  userQuery: string,
+  agentName: string
+): Promise<{
+  resultText: string;
+  summaryText: string;
+  images: ExecutionImage[];
+}> {
+  // 먼저 이미지/텍스트 분리
+  const { sanitizedText, images } = sanitizeRawResultForLlm(rawText);
+
+  try {
+    const res = await fetch("/api/format", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rawResult: sanitizedText, // 🔥 base64 제거된 JSON
+        userQuery,
+        agentName,
+      }),
+    });
+
+    if (!res.ok) {
+      const { resultText, summaryText } = parseExecutionResult(
+        rawText,
+        agentName
+      );
+      return { resultText, summaryText, images };
+    }
+
+    const json = await res.json();
+    if (!json?.ok) {
+      const { resultText, summaryText } = parseExecutionResult(
+        rawText,
+        agentName
+      );
+      return { resultText, summaryText, images };
+    }
+
+    return {
+      resultText: json.formatted ?? sanitizedText,
+      summaryText: json.summary ?? `Execution completed for ${agentName}.`,
+      images,
+    };
+  } catch (e) {
+    console.error("formatWithLlm error:", e);
+    const { resultText, summaryText } = parseExecutionResult(
+      rawText,
+      agentName
+    );
+    return { resultText, summaryText, images };
+  }
+}
+
+export default function ChatPage({ user }: { user: any }) {
   const { setShowHeader } = useHeaderVisibility();
   const [view, setView] = useState<"landing" | "chat">("landing");
   const [prompt, setPrompt] = useState("");
@@ -64,12 +247,20 @@ export default function ChatPage() {
   const [searchResults, setSearchResults] = useState<Agent[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  // 🔹 결제/실행 중 상태
   const [executing, setExecuting] = useState(false);
   const [lastQuery, setLastQuery] = useState("");
   const [agentExecuted, setAgentExecuted] = useState(false);
 
-  // ✅ 전체 에이전트 (AgentsPage처럼 Supabase에서 로드)
+  // ✅ 전체 에이전트 (Supabase에서 로드)
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
+
+  // 🔥 새 상태: 최종 요청을 채팅으로 받기 위한 모드
+  const [finalQueryMode, setFinalQueryMode] = useState(false);
+  const [finalQueryAgentId, setFinalQueryAgentId] = useState<string | null>(
+    null
+  );
 
   // ✅ 최초 진입 시 Supabase에서 모든 에이전트 로드
   useEffect(() => {
@@ -109,8 +300,7 @@ export default function ChatPage() {
     void loadAgents();
   }, []);
 
-  // ✅ 검색 결과가 있으면 searchResults, 없으면 allAgents를 기준으로
-  //    현재 카테고리에 맞는 에이전트만 추천 리스트로 사용
+  // ✅ 검색 결과 or 전체 에이전트에서 현재 카테고리 필터링
   const recommendedAgents = useMemo(() => {
     const baseList = searchResults.length > 0 ? searchResults : allAgents;
 
@@ -161,11 +351,44 @@ export default function ChatPage() {
     return () => setShowHeader(true);
   }, [view, setShowHeader]);
 
+  // 🔥 핵심: 메시지 전송 핸들러에서 finalQueryMode 를 먼저 체크
   const handleSend = async () => {
     const text = prompt.trim();
     if (!text) return;
 
     const now = Date.now();
+
+    // ✅ 1) "최종 요청 입력 모드"일 때 → 이 메시지를 에이전트에 보낼 최종 query 로 사용
+    if (finalQueryMode && finalQueryAgentId) {
+      const cleanedQuery = text;
+
+      // 유저 메시지 기록
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user-final-${now}`,
+          kind: "text",
+          from: "user",
+          text: cleanedQuery,
+        },
+        {
+          id: `ai-prep-${now}`,
+          kind: "text",
+          from: "ai",
+          text: "좋아요, 방금 보내주신 내용을 바탕으로 결제를 진행하고 에이전트를 실행할게요.",
+        },
+      ]);
+
+      setPrompt("");
+      setFinalQueryMode(false);
+      setLastQuery(cleanedQuery);
+      setView("chat");
+
+      await executeAgent(cleanedQuery, finalQueryAgentId);
+      return;
+    }
+
+    // ✅ 2) 평소처럼 검색/추천용 메시지
     const follow =
       view === "landing"
         ? "Searching for the best-fitting agents now."
@@ -304,77 +527,345 @@ export default function ChatPage() {
     }
   };
 
-  const executeAgent = async () => {
+  // 🔥 Confirm 버튼 클릭 시: window.prompt 대신 "최종 요청 요청 모드"로 진입
+  const handleConfirmClick = () => {
     if (!selectedAgentId) return;
-    setAgentExecuted(true);
+
+    const now = Date.now();
+    const agentName =
+      recommendedAgents.find((a) => a.id === selectedAgentId)?.name ??
+      selectedAgentId;
+
+    setFinalQueryMode(true);
+    setFinalQueryAgentId(selectedAgentId);
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `ai-confirm-${now}`,
+        kind: "text",
+        from: "ai",
+        text:
+          `선택된 에이전트 **${agentName}** 로 실행하기 전에,\n` +
+          `최종 요청 내용을 한 번만 더 메시지로 보내 주세요.\n\n` +
+          `예: "web3 기술이 현재 직면한 기술적 도전과제를 깊이 있게 분석해줘"`,
+      },
+    ]);
+  };
+
+  // 🔥 결제 + 실행 함수: finalQuery 를 파라미터로 받도록 변경
+  const executeAgent = async (finalQuery: string, agentIdOverride?: string) => {
+    const agentIdToUse = agentIdOverride ?? selectedAgentId;
+    if (!agentIdToUse) return;
+
+    const cleanedQuery = finalQuery.trim();
+    if (!cleanedQuery) return;
+
+    const now = Date.now();
+
+    setAgentExecuted(false);
     setExecuting(true);
+
     try {
-      const response = await fetch("/api/execute", {
+      // 1) CDP 유저/지갑 확인
+      const currentUser = await getCurrentUser();
+      if (
+        !currentUser ||
+        !currentUser.evmAccounts ||
+        currentUser.evmAccounts.length === 0
+      ) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ai-wallet-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text: "CDP 지갑이 연결되지 않았어요. 먼저 지갑을 연결한 뒤 다시 시도해 주세요.",
+          },
+        ]);
+        return;
+      }
+
+      const viemAccount = await toViemAccount(currentUser.evmAccounts[0]);
+
+      const chain = baseSepolia;
+      const rpcUrl =
+        Number(chain.id) === Number(base.id)
+          ? "https://mainnet.base.org"
+          : "https://sepolia.base.org";
+
+      const walletClient = createWalletClient({
+        account: viemAccount,
+        chain,
+        transport: http(rpcUrl),
+      });
+
+      const publicClient = createPublicClient({
+        chain,
+        transport: http(rpcUrl),
+      });
+
+      const payload = { query: cleanedQuery };
+
+      const agentName =
+        recommendedAgents.find((a) => a.id === agentIdToUse)?.name ??
+        agentIdToUse;
+
+      // 2) 첫 번째 /api/execute/[id] 호출
+      const firstRes = await fetch(`/api/execute/${agentIdToUse}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          agentId: selectedAgentId,
-          query: lastQuery,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      const payload = await response.json();
-      const success = response.ok && payload?.ok;
-      const text = success
-        ? payload?.result?.output ??
-          `Executing agent "${
-            payload?.agent?.name ?? selectedAgentId
-          }" with your latest request.`
-        : `Failed to execute agent: ${payload?.error ?? "unknown error"}`;
+      // ▫️ 가격 0 또는 서버에서 바로 200 → 결제 없이 실행 완료
+      if (firstRes.status === 200) {
+        const text = await firstRes.text();
 
-      if (success) {
+        // 🔥 LLM 포맷팅 + 이미지 분리
+        const { resultText, summaryText, images } = await formatWithLlm(
+          text,
+          cleanedQuery,
+          agentName
+        );
+
         const execId = `exec-${Date.now()}`;
         const executionMessage: ExecutionMessage = {
           id: execId,
           kind: "execution",
           execution: {
-            agentId: selectedAgentId,
-            agentName: payload?.agent?.name ?? selectedAgentId,
-            result: payload?.result?.output ?? "Execution completed.",
-            summary:
-              payload?.result?.summary ??
-              `Execution triggered for ${
-                payload?.agent?.name ?? selectedAgentId
-              }.`,
+            agentId: agentIdToUse,
+            agentName,
+            result: resultText,
+            summary: summaryText,
             reviewSubmitted: false,
             rating: 5,
             reviewText: "",
             submitting: false,
             reviewMessage: null,
+
+            // 🔥 이미지 저장
+            images,
           },
         };
 
-        setMessages((prev) => [...prev, executionMessage]);
-      } else {
         setMessages((prev) => [
           ...prev,
           {
-            id: `exec-${Date.now()}`,
+            id: `ai-free-${Date.now()}`,
             kind: "text",
             from: "ai",
-            text,
+            text: "이 에이전트는 무료로 실행되었어요.",
+          },
+          executionMessage,
+          {
+            id: `ai-next-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text: "실행이 완료되었습니다. 계속해서 다른 요청을 주시면, 다시 에이전트를 추천해 드릴게요.",
           },
         ]);
+
+        setAgentExecuted(true);
+        return;
       }
-    } catch (error) {
+
+      // ▫️ 402가 아니면 에러
+      if (firstRes.status !== 402) {
+        const text = await firstRes.text();
+        const msg = `Unexpected status from execute (first call): ${firstRes.status} ${firstRes.statusText}\n\n${text}`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ai-error-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text: `에이전트 실행에 실패했어요:\n${msg}`,
+          },
+        ]);
+        return;
+      }
+
+      // 3) 402 → 결제 요구사항 파싱
+      const requirements: DirectPaymentRequirements = await firstRes.json();
+
+      if (!requirements.accepts || requirements.accepts.length === 0) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ai-noaccept-${Date.now()}`,
+            kind: "text",
+            from: "ai",
+            text: "결제 요구사항(paymentRequirements.accepts)이 비어 있어서 실행을 진행할 수 없어요.",
+          },
+        ]);
+        return;
+      }
+
+      const accept = requirements.accepts[0];
+
+      const usdcAddress = accept.asset as `0x${string}`;
+      const payTo = accept.payTo as `0x${string}`;
+      const valueUnits = BigInt(accept.value);
+      const humanUsdc = Number(accept.value) / 1e6;
+
+      // 결제 안내 메시지
       setMessages((prev) => [
         ...prev,
         {
-          id: `exec-${Date.now()}`,
+          id: `ai-payinfo-${Date.now()}`,
           kind: "text",
           from: "ai",
-          text: `Failed to execute agent: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
+          text:
+            `이 에이전트 실행에는 약 ${humanUsdc} USDC가 필요해요.\n` +
+            `지갑에서 USDC를 전송해 결제를 진행할게요.\n\n` +
+            `- 📡 Network: ${accept.network}\n- 🔹 To (agent): \`${payTo}\``,
         },
       ]);
+
+      // 4) USDC transfer 트랜잭션 보내기
+      const txHash = await walletClient.writeContract({
+        address: usdcAddress,
+        abi: [
+          {
+            type: "function",
+            name: "transfer",
+            stateMutability: "nonpayable",
+            inputs: [
+              { name: "to", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+            outputs: [{ name: "", type: "bool" }],
+          },
+        ] as const,
+        functionName: "transfer",
+        args: [payTo, valueUnits],
+      });
+
+      const explorerUrl = `https://sepolia.basescan.org/tx/${txHash}`;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-txsent-${Date.now()}`,
+          kind: "text",
+          from: "ai",
+          text:
+            "USDC 전송 트랜잭션을 보냈어요.\n\n" +
+            `- 🔹 Tx Hash: \`${txHash}\`\n`,
+        },
+      ]);
+
+      // 5) 트랜잭션 컨펌 대기
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-txconfirmed-${Date.now()}`,
+          kind: "text",
+          from: "ai",
+          text: "트랜잭션이 블록에 포함되었어요. 결제가 확인되면 에이전트 실행을 계속할게요.",
+        },
+      ]);
+
+      // 6) 결제 proof(tx hash)와 함께 두 번째 /api/execute/[id] 호출
+      const secondRes = await fetch(`/api/execute/${agentIdToUse}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-TX-HASH": txHash,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const text2 = await secondRes.text();
+
+      // 결제 응답 헤더 파싱 → 채팅에 요약
+      const header2 = secondRes.headers.get("X-PAYMENT-RESPONSE");
+      if (header2) {
+        const decoded: PaymentInfo | null =
+          decodePaymentResponseHeader(header2);
+
+        if (decoded) {
+          const paidUsdc = Number(decoded.value) / 1e6;
+          const payMsg =
+            "결제가 완료되었어요.\n" +
+            `- 📡 Network: ${decoded.network}\n` +
+            `- 🔹 From: \`${decoded.from}\`\n` +
+            `- 🔹 To: \`${decoded.to}\`\n` +
+            `- 💸 Amount: ${paidUsdc} USDC\n` +
+            (decoded.explorerUrl
+              ? `- [BaseScan에서 보기](${decoded.explorerUrl})`
+              : "");
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `ai-paid-${Date.now()}`,
+              kind: "text",
+              from: "ai",
+              text: payMsg,
+            },
+          ]);
+        }
+      }
+
+      // 실행 결과 파싱 후 ExecutionMessage로 추가
+      const { resultText, summaryText, images } = await formatWithLlm(
+        text2,
+        cleanedQuery,
+        agentName
+      );
+
+      const execId = `exec-${Date.now()}`;
+      const executionMessage: ExecutionMessage = {
+        id: execId,
+        kind: "execution",
+        execution: {
+          agentId: agentIdToUse,
+          agentName,
+          result: resultText,
+          summary: summaryText,
+          reviewSubmitted: false,
+          rating: 5,
+          reviewText: "",
+          submitting: false,
+          reviewMessage: null,
+          images, // 🔥
+        },
+      };
+
+      setMessages((prev) => [
+        ...prev,
+        executionMessage,
+        {
+          id: `ai-next-${Date.now()}`,
+          kind: "text",
+          from: "ai",
+          text:
+            "에이전트 실행과 결제가 모두 완료되었습니다. " +
+            "추가로 요청을 주시면, 다시 에이전트를 추천하고 실행을 도와드릴게요.",
+        },
+      ]);
+
+      setAgentExecuted(true);
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : "unknown error (executeAgent)";
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-exec-error-${Date.now()}`,
+          kind: "text",
+          from: "ai",
+          text: `에이전트 실행/결제 중 오류가 발생했어요:\n${msg}`,
+        },
+      ]);
+
+      setAgentExecuted(false);
     } finally {
       setExecuting(false);
     }
@@ -456,7 +947,7 @@ export default function ChatPage() {
             recommendedAgents={recommendedAgents}
             selectedAgent={primaryAgent}
             onOpenAgent={(agent) => setAgentModal(agent)}
-            onConfirm={executeAgent}
+            onConfirm={handleConfirmClick} // ✅ 여기만 바뀜
             searching={searching}
             searchError={searchError}
             executing={executing}
@@ -471,6 +962,7 @@ export default function ChatPage() {
               }))
             }
             onSubmitReview={submitReview}
+            user={user}
           />
         )}
       </div>
@@ -560,7 +1052,7 @@ function LandingView({
   return (
     <section className="flex flex-col items-center gap-12 pt-32">
       <h1 className="text-3xl font-semibold tracking-tight text-gray-900">
-        어떤 도움이 필요하신가요?
+        How can I help you today?
       </h1>
 
       <div className="flex w-[70%] flex-col items-center gap-6">
@@ -568,7 +1060,7 @@ function LandingView({
           prompt={prompt}
           onPromptChange={onPromptChange}
           onSend={onSend}
-          placeholder="무엇이든 물어보세요"
+          placeholder="Get recommendations for agents suitable for your task."
           landing
         />
 
@@ -582,11 +1074,11 @@ function LandingView({
       <div className="w-[80%] space-y-4 mt-8">
         <div className="flex items-center justify-center gap-3 text-sm font-semibold text-gray-600">
           <span className="h-px w-16 bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
-          추천
+          Recommendation
           <span className="h-px w-16 bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
         </div>
         {recommendedAgents.length ? (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4 pt-10">
             {recommendedAgents.slice(0, 4).map((agent, index) => (
               <AgentCard
                 key={agent.id}
@@ -597,9 +1089,9 @@ function LandingView({
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-500">
-            해당 카테고리에 맞는 에이전트를 불러오는 중이거나, 아직 등록된
-            에이전트가 없어요.
+          <p className="text-sm text-gray-500 text-center pt-10">
+            The agent for this category is either loading or is not yet
+            registered.
           </p>
         )}
       </div>
@@ -624,6 +1116,7 @@ function ChatView({
   onRateExecution,
   onReviewChangeExecution,
   onSubmitReview,
+  user,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
@@ -641,6 +1134,7 @@ function ChatView({
   onRateExecution: (executionId: string, value: number) => void;
   onReviewChangeExecution: (executionId: string, value: string) => void;
   onSubmitReview: (executionId: string) => void;
+  user: any;
 }) {
   const hasRecommended = recommendedAgents.length > 0;
 
@@ -660,9 +1154,11 @@ function ChatView({
         <header className="flex items-center justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.12em] text-gray-500">
-              {selectedCategory} request
+              {user.name ?? "Guest"}
             </p>
-            <h2 className="text-2xl font-semibold">Request PPT</h2>
+            <h2 className="text-2xl font-semibold">
+              {user.name ?? "Guest"} chat
+            </h2>
           </div>
         </header>
 
@@ -675,7 +1171,6 @@ function ChatView({
                 </ChatBubble>
               );
             }
-
             if (message.kind === "execution") {
               const exec = message.execution;
               return (
@@ -687,9 +1182,31 @@ function ChatView({
                     Execution Result
                   </p>
                   <p className="text-sm text-gray-800">{exec.summary}</p>
+
                   <div className="rounded-xl bg-white p-3 text-sm text-gray-800 ring-1 ring-gray-200">
-                    {exec.result}
+                    <MarkdownRenderer content={exec.result} />
                   </div>
+
+                  {/* 🔥 이미지 있으면 보여주기 */}
+                  {exec.images?.length ? (
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      {exec.images.map((img, idx) => (
+                        <img
+                          key={idx}
+                          src={
+                            img.type === "base64"
+                              ? `data:${img.mimeType ?? "image/png"};base64,${
+                                  img.src
+                                }`
+                              : img.src
+                          }
+                          alt={img.alt ?? `Result image ${idx + 1}`}
+                          className="max-h-64 rounded-xl border bg-white object-contain"
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+
                   {!exec.reviewSubmitted ? (
                     <ReviewBox
                       rating={exec.rating}
@@ -710,7 +1227,6 @@ function ChatView({
                 </div>
               );
             }
-
             return null;
           })}
 
@@ -904,6 +1420,11 @@ function PromptComposer({
           value={prompt}
           onChange={(e) => handleChange(e.target.value, e.target)}
           onKeyDown={(e) => {
+            // 한글 입력 등 IME 조합 중이면 전송하지 않기
+            // (React 18 기준으로 e.nativeEvent.isComposing 지원)
+            // @ts-ignore 타입 이슈 있으면 무시하거나 선언 보강
+            if ((e.nativeEvent as any).isComposing) return;
+
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               onSend();
@@ -1006,21 +1527,21 @@ function ChatBubble({
   children: React.ReactNode;
   from: "user" | "ai";
 }) {
-  const alignClass =
-    from === "user"
-      ? "ml-auto bg-gray-200 text-gray-800"
-      : "mr-auto bg-gray-100";
+  const isUser = from === "user";
+
+  const alignClass = isUser
+    ? "ml-auto bg-blue-100 text-white"
+    : "mr-auto bg-gray-100 text-gray-900";
+
   return (
     <div
       className={cn(
-        "max-w-xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm",
+        "max-w-2xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm",
         alignClass
       )}
     >
       {typeof children === "string" ? (
-        <div className="prose prose-sm max-w-none text-gray-800 prose-p:my-1 prose-li:my-0 prose-code:rounded prose-code:bg-gray-200 prose-code:px-1 prose-code:py-0.5">
-          <ReactMarkdown>{children}</ReactMarkdown>
-        </div>
+        <MarkdownRenderer content={children} />
       ) : (
         children
       )}

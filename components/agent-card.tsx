@@ -26,8 +26,7 @@ export function AgentCard({
   const priceValue = agent.price ?? 0;
   const scoreValue =
     agent.score ?? agent.fitness_score ?? agent.similarity ?? 0;
-  const normalizedScore =
-    agent.fitness_score != null ? agent.fitness_score * 10 : scoreValue;
+  const normalizedScore = agent.test_score ?? 0;
   const handleClick = () => {
     if (onOpen) onOpen();
     if (onSelect) onSelect();
