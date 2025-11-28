@@ -2,9 +2,59 @@ import { ChatOpenAI } from "@langchain/openai";
 import type { AgentInfo } from "./types.ts";
 
 export const llm = new ChatOpenAI({
-  model: "gpt-4.1-mini",
+  model: "gpt-4.1",
   temperature: 0,
 });
+
+// sanitizer.ts 같은 파일로 빼도 되고, 아래에 같이 둬도 됩니다.
+function stripLargeBinaryFields(raw: string): string {
+  // 1) JSON 형태일 때
+  try {
+    const parsed = JSON.parse(raw);
+
+    const clean = (value: any): any => {
+      if (Array.isArray(value)) {
+        return value.map(clean);
+      }
+      if (value && typeof value === "object") {
+        const out: any = {};
+        for (const [key, v] of Object.entries(value)) {
+          const lowerKey = key.toLowerCase();
+
+          // 이미지 / base64 의심 필드 이름들
+          const looksLikeImageField =
+            lowerKey.includes("imagebase64") ||
+            lowerKey.includes("image_base64") ||
+            (lowerKey.includes("image") && typeof v === "string");
+
+          if (
+            looksLikeImageField &&
+            typeof v === "string" &&
+            v.length > 200 // 길이 기준은 상황에 맞게 조절
+          ) {
+            out[key] = "[omitted base64 image]";
+          } else if (typeof v === "string" && v.length > 5000) {
+            // 그냥 너무 긴 문자열도 잘라 버리기 (옵션)
+            out[key] = v.slice(0, 5000) + "… [truncated]";
+          } else {
+            out[key] = clean(v);
+          }
+        }
+        return out;
+      }
+      return value;
+    };
+
+    const cleaned = clean(parsed);
+    return JSON.stringify(cleaned, null, 2);
+  } catch {
+    // 2) JSON 아니면 정규식으로 단순 치환
+    return raw.replace(
+      /"imageBase64"\s*:\s*"([\s\S]*?)"/gi,
+      `"imageBase64": "[omitted base64 image]"`
+    );
+  }
+}
 
 export function buildJudgeMessages(params: {
   agent: AgentInfo;
@@ -12,7 +62,7 @@ export function buildJudgeMessages(params: {
   answer: string;
 }) {
   const { agent, query, answer } = params;
-
+  const safeAnswer = stripLargeBinaryFields(params.answer);
   return [
     {
       role: "system" as const,
@@ -87,7 +137,7 @@ url(API): ${agent.url}
 ${query}
 
 [에이전트 응답(JSON)]
-${answer}
+${safeAnswer}
 `.trim(),
     },
   ];
