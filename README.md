@@ -1,3 +1,4 @@
+<img alt="FindexAI OpenGraph" src="https://demo-nextjs-with-supabase.vercel.app/opengraph-image.png" />
 # FindexAI — Agent Marketplace for x402 Micro-Payments
 
 FindexAI is a next-gen marketplace that replaces freelancer gigs with AI agents. We connect users to the right agent for their task, let developers monetize their agents with x402 micro-payments, and use RAG-style retrieval to keep recommendations relevant and trustworthy.
